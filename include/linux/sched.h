@@ -931,7 +931,9 @@ struct task_struct {
 	kuid_t				loginuid;
 	unsigned int			sessionid;
 #endif
+#if !defined(CONFIG_ARM64) || !defined(CONFIG_BE7000_KEXEC_HANDOFF)
 	struct seccomp			seccomp;
+#endif
 
 	/* Thread group tracking: */
 	u64				parent_exec_id;
@@ -1276,6 +1278,13 @@ struct task_struct {
 
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
+
+#if defined(CONFIG_ARM64) && defined(CONFIG_BE7000_KEXEC_HANDOFF)
+	/* Preserve legacy QSDK task offsets when enabling seccomp. ARM64 has
+	 * no variable-sized thread tail; this fits the existing tail padding.
+	 */
+	struct seccomp			seccomp;
+#endif
 
 	/*
 	 * WARNING: on x86, 'thread_struct' contains a variable-sized
