@@ -877,6 +877,13 @@ struct sk_buff {
 		__u32		reserved_tailroom;
 	};
 
+	/*
+	 * Xiaomi BE7000 5.4.164 has a vendor u32 at this location.  Its
+	 * released QSDK base omits the field, but external modules must keep
+	 * the firmware ABI: inner_protocol starts at 168 and tail at 184.
+	 */
+	__u32			xiaomi_abi_reserved;
+
 	union {
 		__be16		inner_protocol;
 		__u8		inner_ipproto;
