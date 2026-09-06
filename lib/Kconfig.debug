@@ -3,6 +3,17 @@ menu "Kernel hacking"
 
 menu "printk and dmesg options"
 
+config BE7000_PRINTK_PERSIST
+	bool "Xiaomi BE7000 persistent printk ring for kexec debugging"
+	depends on ARM64 && PRINTK && OF_EARLY_FLATTREE
+	help
+	  Mirror printk text into the BE7000 reserved RAM range at 0x4fa00000
+	  using the KXLG v1 format understood by decode_xiaomi_printk_ring.py.
+	  Enable explicitly with be7000_printk=1 on the kernel command line.
+	  The target DTB must reserve the exact 256 KiB range with no-map.
+	  This does not create panic.gz; it supplies persistent text for the
+	  existing Xiaomi crash capture path after a warm watchdog reset.
+
 config PRINTK_TIME
 	bool "Show timing information on printks"
 	depends on PRINTK

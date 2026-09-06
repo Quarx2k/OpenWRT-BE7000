@@ -60,6 +60,13 @@
 #include "braille.h"
 #include "internal.h"
 
+#ifdef CONFIG_BE7000_PRINTK_PERSIST
+#include <linux/io.h>
+#include <linux/libfdt.h>
+#include <linux/of_fdt.h>
+#include <asm/early_ioremap.h>
+#endif
+
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
@@ -613,6 +620,169 @@ static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
 	return msg_used_size(*text_len + *trunc_msg_len, 0, pad_len);
 }
 
+#ifdef CONFIG_BE7000_PRINTK_PERSIST
+/* KXLG v1, shared with scripts/decode_xiaomi_printk_ring.py. */
+#define BE7000_LOG_PHYS		0x4fa00000ULL
+#define BE7000_LOG_SIZE		0x40000
+#define BE7000_LOG_HEADER	0x20
+#define BE7000_LOG_DATA		0x40
+#define BE7000_LOG_CAPACITY	(BE7000_LOG_SIZE - BE7000_LOG_DATA)
+#define BE7000_LOG_MAGIC		0x474c584b
+
+static bool be7000_log_enabled __initdata;
+static void __iomem *be7000_log_base;
+static u32 be7000_log_pos, be7000_log_wraps;
+static u64 be7000_log_total;
+
+static int __init be7000_printk_setup(char *str)
+{
+	return kstrtobool(str, &be7000_log_enabled);
+}
+early_param("be7000_printk", be7000_printk_setup);
+
+/* Called under logbuf_lock; never allocate, print, or take another lock. */
+static void be7000_printk_store(const char *text, u16 len)
+{
+	u8 __iomem *base = be7000_log_base;
+	u8 __iomem *header;
+	unsigned int i;
+
+	if (!base)
+		return;
+	header = base + BE7000_LOG_HEADER;
+	for (i = 0; i <= len; i++) {
+		writeb_relaxed(i == len ? '\n' : text[i],
+			       base + BE7000_LOG_DATA + be7000_log_pos);
+		if (++be7000_log_pos == BE7000_LOG_CAPACITY) {
+			be7000_log_pos = 0;
+			be7000_log_wraps++;
+		}
+	}
+	be7000_log_total += len + 1;
+	/* Device mapping avoids dirty cache lines surviving only in a CPU. */
+	dsb(sy);
+	writel_relaxed(be7000_log_pos, header + 8);
+	writel_relaxed(be7000_log_wraps, header + 12);
+	writeq_relaxed(be7000_log_total, header + 16);
+	dsb(sy);
+}
+
+/* Require the exact reserved no-map range from the BE7000 target DTB. */
+static bool __init be7000_printk_reserved(void)
+{
+	const void *fdt = initial_boot_params;
+	struct memblock_region *region;
+	const fdt32_t *reg;
+	int parent, node, len;
+	bool found = false;
+
+	if (!fdt || !of_flat_dt_is_compatible(of_get_flat_dt_root(),
+					    "qcom,ipq9574"))
+		return false;
+	parent = fdt_path_offset(fdt, "/reserved-memory");
+	if (parent < 0)
+		return false;
+	reg = fdt_getprop(fdt, parent, "#address-cells", &len);
+	if (!reg || len != 4 || fdt32_to_cpu(*reg) != 2)
+		return false;
+	reg = fdt_getprop(fdt, parent, "#size-cells", &len);
+	if (!reg || len != 4 || fdt32_to_cpu(*reg) != 2)
+		return false;
+	fdt_for_each_subnode(node, fdt, parent) {
+		reg = fdt_getprop(fdt, node, "reg", &len);
+		if (reg && len == 16 && !fdt32_to_cpu(reg[0]) &&
+		    fdt32_to_cpu(reg[1]) == BE7000_LOG_PHYS &&
+		    !fdt32_to_cpu(reg[2]) &&
+		    fdt32_to_cpu(reg[3]) == BE7000_LOG_SIZE &&
+		    fdt_getprop(fdt, node, "no-map", NULL)) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return false;
+	/* QSDK may remove no-map RAM or retain it with MEMBLOCK_NOMAP. */
+	for_each_memblock(memory, region) {
+		if (region->base < BE7000_LOG_PHYS + BE7000_LOG_SIZE &&
+		    region->base + region->size > BE7000_LOG_PHYS &&
+		    !memblock_is_nomap(region))
+			return false;
+	}
+	return true;
+}
+
+/* setup_arch(), after reserved-memory parsing and before paging_init(). */
+void __init be7000_printk_init(void)
+{
+	u8 __iomem *base;
+	u8 __iomem *header;
+	unsigned long flags;
+	u64 seq;
+	u32 idx;
+
+	if (!be7000_log_enabled)
+		return;
+	if (!be7000_printk_reserved()) {
+		pr_warn("BE7000 KXLG: missing reserved no-map range; disabled\n");
+		return;
+	}
+	base = early_ioremap(BE7000_LOG_PHYS, BE7000_LOG_SIZE);
+	if (!base) {
+		pr_warn("BE7000 KXLG: early mapping failed\n");
+		return;
+	}
+	header = base + BE7000_LOG_HEADER;
+	logbuf_lock_irqsave(flags);
+	writel_relaxed(0, header);
+	dsb(sy);
+	writel_relaxed(1, header + 4);
+	writel_relaxed(0, header + 8);
+	writel_relaxed(0, header + 12);
+	writeq_relaxed(0, header + 16);
+	writel_relaxed(BE7000_LOG_CAPACITY, header + 24);
+	writel_relaxed(0, header + 28);
+	dsb(sy);
+	writel_relaxed(BE7000_LOG_MAGIC, header);
+	dsb(sy);
+	be7000_log_base = base;
+	/* Include the banner and messages emitted before setup_arch(). */
+	idx = log_first_idx;
+	for (seq = log_first_seq; seq < log_next_seq; seq++) {
+		struct printk_log *msg = log_from_idx(idx);
+
+		be7000_printk_store(log_text(msg), msg->text_len);
+		idx = log_next(idx);
+	}
+	logbuf_unlock_irqrestore(flags);
+	pr_info("BE7000 KXLG v1: persistent printk active at 0x4fa00020\n");
+}
+
+/* Release the temporary fixmap before the early-ioremap leak check. */
+static int __init be7000_printk_remap(void)
+{
+	void __iomem *base, *early;
+	unsigned long flags;
+
+	if (!be7000_log_base)
+		return 0;
+	base = ioremap(BE7000_LOG_PHYS, BE7000_LOG_SIZE);
+	if (!base) {
+		pr_warn("BE7000 KXLG: keeping early mapping; ioremap failed\n");
+		return -ENOMEM;
+	}
+	logbuf_lock_irqsave(flags);
+	early = be7000_log_base;
+	be7000_log_base = base;
+	logbuf_unlock_irqrestore(flags);
+	early_iounmap(early, BE7000_LOG_SIZE);
+	pr_info("BE7000 KXLG: permanent mapping active\n");
+	return 0;
+}
+early_initcall(be7000_printk_remap);
+#else
+static inline void be7000_printk_store(const char *text, u16 len) { }
+#endif
+
 /* insert record into the buffer, discard old ones, update heads */
 static int log_store(u32 caller_id, int facility, int level,
 		     enum log_flags flags, u64 ts_nsec,
@@ -622,6 +792,8 @@ static int log_store(u32 caller_id, int facility, int level,
 	struct printk_log *msg;
 	u32 size, pad_len;
 	u16 trunc_msg_len = 0;
+
+	be7000_printk_store(text, text_len);
 
 	/* number of '\0' padding bytes to next message */
 	size = msg_used_size(text_len, dict_len, &pad_len);

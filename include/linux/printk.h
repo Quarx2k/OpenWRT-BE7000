@@ -11,6 +11,12 @@
 extern const char linux_banner[];
 extern const char linux_proc_banner[];
 
+#ifdef CONFIG_BE7000_PRINTK_PERSIST
+void __init be7000_printk_init(void);
+#else
+static inline void be7000_printk_init(void) { }
+#endif
+
 #define PRINTK_MAX_SINGLE_HEADER_LEN 2
 
 static inline int printk_get_level(const char *buffer)
