@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/*
+ * Dev SoC AP-DEVSOC01.1 board device tree source
+ *
+ * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
+
+/dts-v1/;
+
+#include "devsoc.dtsi"
+
+#ifdef __IPQ_MEM_PROFILE_512_MB__
+#include "devsoc-512MB-memory.dtsi"
+#else
+#include "devsoc-default-memory.dtsi"
+#endif
+
+/ {
+	#address-cells = <0x2>;
+	#size-cells = <0x2>;
+	model = "Qualcomm Technologies, Inc. DevSoC/AP-DEVSOC01.1";
+	compatible = "qcom,devsoc-ap-devsoc01.1", "qcom,devsoc";
+	interrupt-parent = <&intc>;
+
+	aliases {
+		serial0 = &blsp1_uart0;
+		serial1 = &blsp1_uart1;
+	};
+
+	chosen {
+		stdout-path = "serial0";
+	};
+
+	soc {
+		pinctrl@1000000 {
+			emmc_pins: emmc_pins {
+				emmc_clk {
+					pins = "gpio13";
+					function = "sdc_clk";
+					drive-strength = <8>;
+					bias-disable;
+				};
+				emmc_cmd {
+					pins = "gpio12";
+					function = "sdc_cmd";
+					drive-strength = <8>;
+					bias-pull-up;
+				};
+				emmc_data {
+					pins = "gpio8", "gpio9", "gpio10",
+						"gpio11";
+					function = "sdc_data";
+					drive-strength = <8>;
+					bias-pull-up;
+				};
+			};
+
+			qspi_nand_pins: qspi_nand_pins {
+				qspi_clock {
+					pins = "gpio13";
+					function = "qspi_clk";
+					drive-strength = <8>;
+					bias-disable;
+				};
+
+				qspi_cs {
+					pins = "gpio12";
+					function = "qspi_cs";
+					drive-strength = <8>;
+					bias-disable;
+				};
+
+				qspi_data {
+					pins = "gpio8", "gpio9", "gpio10", "gpio11";
+					function = "qspi_data";
+					drive-strength = <8>;
+					bias-disable;
+				};
+			};
+
+			spi_0_pins: spi0-pinmux {
+				pins = "gpio14", "gpio15", "gpio16", "gpio17";
+				function = "blsp0_spi";
+				drive-strength = <2>;
+				bias-disable;
+			};
+
+			serial_0_pins: serial0-pinmux {
+				pins = "gpio18", "gpio19";
+				function = "blsp0_uart0";
+				drive-strength = <8>;
+				bias-pull-down;
+			};
+
+			serial_1_pins: serial1-pinmux {
+				pins = "gpio25", "gpio26", "gpio27", "gpio28";
+				function = "blsp1_uart1";
+				drive-strength = <8>;
+				bias-pull-down;
+			};
+
+			i2c_1_pins: i2c-1-pinmux {
+				pins = "gpio29", "gpio30";
+				function = "blsp1_i2c0";
+				drive-strength = <8>;
+				bias-disable;
+			};
+		};
+
+		gcc: gcc@1800000 {
+			gcc-use-dummy;
+		};
+
+		nsscc: nsscc@39b00000 {
+			nsscc-use-dummy;
+		};
+
+		serial@78af000 {
+			pinctrl-0 = <&serial_0_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+		};
+
+		serial@78b0000 {
+			pinctrl-0 = <&serial_1_pins>;
+			pinctrl-names = "default";
+		};
+
+		spi@78b5000 {
+			pinctrl-0 = <&spi_0_pins>;
+			pinctrl-names = "default";
+			cs-select = <0>;
+			status = "ok";
+
+			m25p80@0 {
+				compatible = "n25q128a11";
+				#address-cells = <1>;
+				#size-cells = <1>;
+				reg = <0>;
+				spi-max-frequency = <50000000>;
+			};
+		};
+
+		i2c_1: i2c@78b6000 {
+			pinctrl-0 = <&i2c_1_pins>;
+			pinctrl-names = "default";
+		};
+
+		dma@7984000 {
+			status = "ok";
+		};
+
+		nand: nand@79b0000 {
+			pinctrl-0 = <&qspi_nand_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+		};
+
+		usb3@8A00000 {
+			status = "ok";
+		};
+
+		ssuniphy_0: ssuniphy@4b0000 {
+			status = "ok";
+		};
+
+		hs_m31phy_0: hs_m31phy@7b000 {
+			status = "ok";
+		};
+
+		pcie1_x2: pcie@18000000 {
+			max-link-speed = <1>;
+			perst-gpio = <&tlmm 47 GPIO_ACTIVE_LOW>;
+			status = "ok";
+			pcie_x2_rp {
+				reg = <0 0 0 0 0>;
+
+				qcom,mhi@1 {
+					reg = <0 0 0 0 0>;
+					qrtr_instance_id = <0x20>;
+				};
+			};
+		};
+	};
+};
