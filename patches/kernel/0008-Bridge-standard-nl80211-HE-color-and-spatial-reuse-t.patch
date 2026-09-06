@@ -1,0 +1,320 @@
+From 6993414ba69fdc76fa42c63f6becd703862a1528 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:58 +0600
+Subject: [PATCH 8/8] Bridge standard nl80211 HE color and spatial reuse to QCA
+ vendor commands
+
+---
+ net/wireless/Makefile         |   2 +
+ net/wireless/nl80211.c        |  38 ++++++++-
+ net/wireless/qcom-he-compat.c | 156 ++++++++++++++++++++++++++++++++++
+ net/wireless/qcom-he-compat.h |  22 +++++
+ 4 files changed, 216 insertions(+), 2 deletions(-)
+ create mode 100644 net/wireless/qcom-he-compat.c
+ create mode 100644 net/wireless/qcom-he-compat.h
+
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index af590ae60..01b6ee836 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -58,3 +58,5 @@ $(obj)/extra-certs.c: $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR:"%"=%) \
+ 	  ) > $@)
+ 
+ clean-files += shipped-certs.c extra-certs.c
++
++cfg80211-y += qcom-he-compat.o
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 1df8ff57d..12bcaab20 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -28,6 +28,7 @@
+ #include "core.h"
+ #include "nl80211.h"
+ #include "reg.h"
++#include "qcom-he-compat.h"
+ #include "rdev-ops.h"
+ 
+ static int nl80211_crypto_settings(struct cfg80211_registered_device *rdev,
+@@ -314,11 +315,21 @@ nl80211_pmsr_attr_policy[NL80211_PMSR_ATTR_MAX + 1] = {
+ };
+ 
+ static const struct nla_policy
+-he_obss_pd_policy[NL80211_HE_OBSS_PD_ATTR_MAX + 1] = {
++he_obss_pd_policy[QCOM_HE_SR_CTRL + 1] = {
+ 	[NL80211_HE_OBSS_PD_ATTR_MIN_OFFSET] =
+ 		NLA_POLICY_RANGE(NLA_U8, 1, 20),
+ 	[NL80211_HE_OBSS_PD_ATTR_MAX_OFFSET] =
+ 		NLA_POLICY_RANGE(NLA_U8, 1, 20),
++	[QCOM_HE_NON_SRG_MAX] = NLA_POLICY_RANGE(NLA_U8, 1, 20),
++	[QCOM_HE_COLOR_BITMAP] = NLA_POLICY_EXACT_LEN(8),
++	[QCOM_HE_BSSID_BITMAP] = NLA_POLICY_EXACT_LEN(8),
++	[QCOM_HE_SR_CTRL] = { .type = NLA_U8 },
++};
++
++static const struct nla_policy qcom_he_color_policy[4] = {
++	[1] = NLA_POLICY_RANGE(NLA_U8, 1, 63),
++	[2] = { .type = NLA_FLAG },
++	[3] = { .type = NLA_FLAG },
+ };
+ 
+ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
+@@ -628,6 +639,7 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
+ 					.len = SAE_PASSWORD_MAX_LEN },
+ 	[NL80211_ATTR_TWT_RESPONDER] = { .type = NLA_FLAG },
+ 	[NL80211_ATTR_HE_OBSS_PD] = NLA_POLICY_NESTED(he_obss_pd_policy),
++	[NL80211_ATTR_HE_BSS_COLOR] = NLA_POLICY_NESTED(qcom_he_color_policy),
+ 	[NL80211_ATTR_VLAN_ID] = NLA_POLICY_RANGE(NLA_U16, 1, VLAN_N_VID - 2),
+ 	[NL80211_ATTR_SAE_PWE] = NLA_POLICY_RANGE(NLA_U8, NL80211_SAE_PWE_HUNT_AND_PECK,
+ 						  NL80211_SAE_PWE_BOTH),
+@@ -4738,6 +4750,8 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 	struct net_device *dev = info->user_ptr[1];
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
+ 	struct cfg80211_ap_settings params;
++	struct qcom_he_config he = {};
++	bool qcom_he = qcom_he_compat_active(rdev);
+ 	struct cfg80211_mlo_info *ml_info = NULL;
+ 	int err, tmp, i;
+ 	struct nlattr *attr;
+@@ -4899,7 +4913,11 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 	params.twt_responder =
+ 		    nla_get_flag(info->attrs[NL80211_ATTR_TWT_RESPONDER]);
+ 
+-	if (info->attrs[NL80211_ATTR_HE_OBSS_PD]) {
++	if (qcom_he) {
++		err = qcom_he_parse(info, &he);
++		if (err)
++			goto out;
++	} else if (info->attrs[NL80211_ATTR_HE_OBSS_PD]) {
+ 		err = nl80211_parse_he_obss_pd(
+ 					info->attrs[NL80211_ATTR_HE_OBSS_PD],
+ 					&params.he_obss_pd);
+@@ -4936,6 +4954,12 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 	if (info->attrs[NL80211_ATTR_EXTERNAL_AUTH_SUPPORT])
+ 		params.flags |= AP_SETTINGS_EXTERNAL_AUTH_SUPPORT;
+ 
++	if (qcom_he) {
++		err = qcom_he_apply(rdev, wdev, info, &he);
++		if (err)
++			goto out;
++	}
++
+ 	wdev_lock(wdev);
+ 	err = rdev_start_ap(rdev, dev, &params);
+ 	if (!err) {
+@@ -4962,6 +4986,7 @@ static int nl80211_set_beacon(struct sk_buff *skb, struct genl_info *info)
+ 	struct net_device *dev = info->user_ptr[1];
+ 	struct wireless_dev *wdev = dev->ieee80211_ptr;
+ 	struct cfg80211_beacon_data params;
++	struct qcom_he_config he;
+ 	int err;
+ 
+ 	if (dev->ieee80211_ptr->iftype != NL80211_IFTYPE_AP &&
+@@ -4978,6 +5003,15 @@ static int nl80211_set_beacon(struct sk_buff *skb, struct genl_info *info)
+ 	if (err)
+ 		return err;
+ 
++	if (qcom_he_compat_active(rdev)) {
++		err = qcom_he_parse(info, &he);
++		if (err)
++			return err;
++		err = qcom_he_apply(rdev, wdev, info, &he);
++		if (err)
++			return err;
++	}
++
+ 	wdev_lock(wdev);
+ 	err = rdev_change_beacon(rdev, dev, &params);
+ 	wdev_unlock(wdev);
+diff --git a/net/wireless/qcom-he-compat.c b/net/wireless/qcom-he-compat.c
+new file mode 100644
+index 000000000..2d183479f
+--- /dev/null
++++ b/net/wireless/qcom-he-compat.c
+@@ -0,0 +1,156 @@
++// SPDX-License-Identifier: GPL-2.0
++/* BE7000 stock2024 QSDK control adapter. No closed-driver ABI extensions. */
++#include <linux/module.h>
++#include <asm/unaligned.h>
++#include "core.h"
++#include "qcom-he-compat.h"
++
++static bool be7000_he_compat;
++module_param(be7000_he_compat, bool, 0444);
++MODULE_PARM_DESC(be7000_he_compat, "Enable tested BE7000 stock2024 HE vendor adapter");
++
++static const struct wiphy_vendor_command *qcom_he_command(struct wiphy *wiphy)
++{
++	int i;
++	for (i = 0; i < wiphy->n_vendor_commands; i++) {
++		const struct wiphy_vendor_command *cmd = &wiphy->vendor_commands[i];
++		if (cmd->info.vendor_id == 0x1374 && cmd->info.subcmd == 74 &&
++		    cmd->doit && cmd->policy == VENDOR_CMD_RAW_DATA)
++			return cmd;
++	}
++	return NULL;
++}
++
++bool qcom_he_compat_active(struct cfg80211_registered_device *rdev)
++{
++	return be7000_he_compat && qcom_he_command(&rdev->wiphy);
++}
++
++/* The outer policy validates widths/ranges. Parse again for semantic checks. */
++int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg)
++{
++	struct nlattr *tb[7];
++	int err;
++	memset(cfg, 0, sizeof(*cfg));
++	if (info->attrs[NL80211_ATTR_HE_OBSS_PD]) {
++		err = nla_parse_nested(tb, 6, info->attrs[NL80211_ATTR_HE_OBSS_PD],
++				       NULL, info->extack);
++		if (err)
++			return err;
++		if (!tb[QCOM_HE_SR_CTRL]) {
++			NL_SET_ERR_MSG(info->extack, "QSDK HE adapter requires SR_CTRL");
++			return -EINVAL;
++		}
++		cfg->sr = true;
++		cfg->ctrl = nla_get_u8(tb[QCOM_HE_SR_CTRL]);
++		if (cfg->ctrl & ~0x1f) {
++			NL_SET_ERR_MSG(info->extack, "Unsupported SR control bits");
++			return -EOPNOTSUPP;
++		}
++		/* QSDK couples non-SRG enable with presence of the offset field. */
++		if (!!(cfg->ctrl & BIT(1)) == !!(cfg->ctrl & BIT(2))) {
++			NL_SET_ERR_MSG(info->extack, "QSDK requires non-SRG offset when enabled");
++			return -EOPNOTSUPP;
++		}
++		if (tb[QCOM_HE_MIN]) cfg->min = nla_get_u8(tb[QCOM_HE_MIN]);
++		if (tb[QCOM_HE_MAX]) cfg->max = nla_get_u8(tb[QCOM_HE_MAX]);
++		if (tb[QCOM_HE_NON_SRG_MAX])
++			cfg->non_srg_max = nla_get_u8(tb[QCOM_HE_NON_SRG_MAX]);
++		if (cfg->min > cfg->max)
++			return -EINVAL;
++		if (tb[QCOM_HE_COLOR_BITMAP])
++			memcpy(cfg->color_bitmap, nla_data(tb[QCOM_HE_COLOR_BITMAP]), 8);
++		if (tb[QCOM_HE_BSSID_BITMAP])
++			memcpy(cfg->bssid_bitmap, nla_data(tb[QCOM_HE_BSSID_BITMAP]), 8);
++	}
++	if (info->attrs[NL80211_ATTR_HE_BSS_COLOR]) {
++		err = nla_parse_nested(tb, 3, info->attrs[NL80211_ATTR_HE_BSS_COLOR],
++				       NULL, info->extack);
++		if (err)
++			return err;
++		if (tb[3]) {
++			NL_SET_ERR_MSG(info->extack, "QSDK partial BSS color mapping is unavailable");
++			return -EOPNOTSUPP;
++		}
++		if (!tb[1])
++			return -EINVAL;
++		cfg->color = true;
++		cfg->bss_color = tb[2] ? 0 : nla_get_u8(tb[1]);
++	}
++	return 0;
++}
++
++static int qcom_he_set(struct cfg80211_registered_device *rdev,
++		       struct wireless_dev *wdev, u32 command, u32 field,
++		       u32 data, u32 length, u32 flags)
++{
++	const struct wiphy_vendor_command *cmd = qcom_he_command(&rdev->wiphy);
++	struct { struct nlattr attr; u32 value; } args[5];
++	u32 values[] = { command, field, data, length, flags };
++	int i;
++	if (!cmd)
++		return -EOPNOTSUPP;
++	for (i = 0; i < ARRAY_SIZE(args); i++) {
++		args[i].attr.nla_type = 17 + i;
++		args[i].attr.nla_len = sizeof(args[i]);
++		args[i].value = values[i];
++	}
++	/* These setters return status, never allocate a vendor reply. RTNL held. */
++	return cmd->doit(&rdev->wiphy, wdev, args, sizeof(args));
++}
++
++int qcom_he_apply(struct cfg80211_registered_device *rdev,
++		  struct wireless_dev *wdev, struct genl_info *info,
++		  const struct qcom_he_config *cfg)
++{
++	struct wireless_dev *tmp, *radio = NULL;
++	int err;
++	ASSERT_RTNL();
++	if (cfg->color) {
++		list_for_each_entry(tmp, &rdev->wiphy.wdev_list, list) {
++			if (!tmp->netdev)
++				continue;
++			if (!strncmp(tmp->netdev->name, "wifi", 4) && !tmp->ssid_len) {
++				if (radio)
++					return -EOPNOTSUPP;
++				radio = tmp;
++			} else if (tmp != wdev && tmp->beacon_interval) {
++				NL_SET_ERR_MSG(info->extack, "QSDK color is radio-wide; another AP is active");
++				return -EOPNOTSUPP;
++			}
++		}
++		if (!radio)
++			return -ENODEV;
++	}
++	if (cfg->sr) {
++		err = qcom_he_set(rdev, wdev, 293, 1, !(cfg->ctrl & BIT(0)), 0, 0);
++		if (err) goto failed;
++		err = qcom_he_set(rdev, wdev, 293, 2, !(cfg->ctrl & BIT(1)), cfg->non_srg_max, 0);
++		if (err) goto failed;
++		err = qcom_he_set(rdev, wdev, 293, 3, !!(cfg->ctrl & BIT(4)), 0, 0);
++		if (err) goto failed;
++		err = qcom_he_set(rdev, wdev, 293, 4, !!(cfg->ctrl & BIT(3)), cfg->min, cfg->max);
++		if (err) goto failed;
++		if (cfg->ctrl & BIT(3)) {
++			err = qcom_he_set(rdev, wdev, 296, 1,
++				get_unaligned_le32(cfg->color_bitmap + 4),
++				get_unaligned_le32(cfg->color_bitmap), 0);
++			if (err) goto failed;
++			err = qcom_he_set(rdev, wdev, 296, 2,
++				get_unaligned_le32(cfg->bssid_bitmap + 4),
++				get_unaligned_le32(cfg->bssid_bitmap), 0);
++			if (err) goto failed;
++		}
++	}
++	if (cfg->color) {
++		err = qcom_he_set(rdev, radio, 333, cfg->bss_color, 1, 0, 0);
++		if (err) goto failed;
++	}
++	if (cfg->sr || cfg->color)
++		pr_info("cfg80211: BE7000 HE %s sr=%d ctrl=%u color=%d/%u applied\n",
++			wdev->netdev->name, cfg->sr, cfg->ctrl, cfg->color, cfg->bss_color);
++	return 0;
++failed:
++	NL_SET_ERR_MSG(info->extack, "QSDK driver rejected HE configuration");
++	return err;
++}
+diff --git a/net/wireless/qcom-he-compat.h b/net/wireless/qcom-he-compat.h
+new file mode 100644
+index 000000000..2a3cdabf2
+--- /dev/null
++++ b/net/wireless/qcom-he-compat.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef QCOM_HE_COMPAT_H
++#define QCOM_HE_COMPAT_H
++
++/* nl80211 wire IDs; keep QSDK's public driver structures unchanged. */
++enum qcom_he_obss_attr {
++	QCOM_HE_MIN = 1, QCOM_HE_MAX, QCOM_HE_NON_SRG_MAX,
++	QCOM_HE_COLOR_BITMAP, QCOM_HE_BSSID_BITMAP, QCOM_HE_SR_CTRL,
++};
++
++struct qcom_he_config {
++	bool sr, color;
++	u8 ctrl, min, max, non_srg_max, bss_color;
++	u8 color_bitmap[8], bssid_bitmap[8];
++};
++
++bool qcom_he_compat_active(struct cfg80211_registered_device *rdev);
++int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg);
++int qcom_he_apply(struct cfg80211_registered_device *rdev,
++		  struct wireless_dev *wdev, struct genl_info *info,
++		  const struct qcom_he_config *cfg);
++#endif
+-- 
+2.43.0
+

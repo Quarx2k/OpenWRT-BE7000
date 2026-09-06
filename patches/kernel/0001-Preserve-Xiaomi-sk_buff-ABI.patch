@@ -1,0 +1,30 @@
+From 65a4446d0e6c21d084ca69317641515da4bd22aa Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:57 +0600
+Subject: [PATCH 1/8] Preserve Xiaomi sk_buff ABI
+
+---
+ include/linux/skbuff.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index faca4c9ac..19f9c1a9f 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -877,6 +877,13 @@ struct sk_buff {
+ 		__u32		reserved_tailroom;
+ 	};
+ 
++	/*
++	 * Xiaomi BE7000 5.4.164 has a vendor u32 at this location.  Its
++	 * released QSDK base omits the field, but external modules must keep
++	 * the firmware ABI: inner_protocol starts at 168 and tail at 184.
++	 */
++	__u32			xiaomi_abi_reserved;
++
+ 	union {
+ 		__be16		inner_protocol;
+ 		__u8		inner_ipproto;
+-- 
+2.43.0
+

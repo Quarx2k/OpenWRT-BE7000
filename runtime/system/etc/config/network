@@ -1,0 +1,21 @@
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config device
+	option name 'br-owrt'
+	option type 'bridge'
+	list ports 'eth0'
+	list ports 'eth1'
+	list ports 'eth2'
+	list ports 'eth3'
+	option stp '0'
+	option vlan_filtering '1'
+
+config interface 'lan'
+	option device 'br-owrt'
+	option proto 'static'
+	option ipaddr '192.168.1.1'
+	option netmask '255.255.255.0'

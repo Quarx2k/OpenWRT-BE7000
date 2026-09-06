@@ -1,0 +1,419 @@
+From f0c5387721911381d58cad706d8c02b88d828336 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:58 +0600
+Subject: [PATCH 3/8] Restore RPM GLINK and CPU handoff after kexec
+
+---
+ arch/arm64/kernel/setup.c         |   1 +
+ drivers/rpmsg/Kconfig             |  10 +++
+ drivers/rpmsg/qcom_glink_be7000.h |  66 +++++++++++++++++++
+ drivers/rpmsg/qcom_glink_native.c |  87 ++++++++++++++++++++++++-
+ drivers/rpmsg/qcom_glink_native.h |   6 ++
+ drivers/rpmsg/qcom_glink_rpm.c    | 102 +++++++++++++++++++++++++++---
+ 6 files changed, 261 insertions(+), 11 deletions(-)
+ create mode 100644 drivers/rpmsg/qcom_glink_be7000.h
+
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index f55f4a15a..217185138 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -320,6 +320,7 @@ void __init setup_arch(char **cmdline_p)
+ 	efi_init();
+ 	arm64_memblock_init();
+ 
++	be7000_printk_init();
+ 	paging_init();
+ 
+ 	acpi_table_upgrade();
+diff --git a/drivers/rpmsg/Kconfig b/drivers/rpmsg/Kconfig
+index d0322b41e..f3796afb7 100644
+--- a/drivers/rpmsg/Kconfig
++++ b/drivers/rpmsg/Kconfig
+@@ -29,6 +29,16 @@ config RPMSG_QCOM_GLINK_RPM
+ 	  which serves as a channel for communication with the RPM in GLINK
+ 	  enabled systems.
+ 
++config BE7000_KEXEC_HANDOFF
++	bool "Xiaomi BE7000 retained RPM channel after kexec"
++	depends on ARM64 && !CPU_BIG_ENDIAN && OF
++	depends on RPMSG_QCOM_GLINK_RPM=y
++	help
++	  Receive the pointer-free RGLH v1 record left by the v62 kexec
++	  modules. Enable with be7000_handoff=1 and boot with maxcpus=1.
++	  RPM keeps running; this kernel recreates its own GLINK objects.
++	  The target DTB must retain the Xiaomi rsvd2 no-map reservation.
++
+ config RPMSG_QCOM_GLINK_SMEM
+ 	tristate "Qualcomm SMEM Glink driver"
+ 	select RPMSG_QCOM_GLINK_NATIVE
+diff --git a/drivers/rpmsg/qcom_glink_be7000.h b/drivers/rpmsg/qcom_glink_be7000.h
+new file mode 100644
+index 000000000..bccf680d4
+--- /dev/null
++++ b/drivers/rpmsg/qcom_glink_be7000.h
+@@ -0,0 +1,66 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __QCOM_GLINK_BE7000_H__
++#define __QCOM_GLINK_BE7000_H__
++
++#include <linux/build_bug.h>
++#include <linux/io.h>
++#include <linux/string.h>
++
++#define BE7000_RGLH_PHYS		0x4fb3f300ULL
++#define BE7000_RGLH_MAGIC		0x484c4752U
++#define BE7000_RGLH_READY		1U
++#define BE7000_RGLH_INJECTED	2U
++#define BE7000_RGLH_ADOPTED	3U
++#define BE7000_RGLH_NAME		"rpm_requests"
++
++/* Exact v62 wire format: little-endian ARM64, no kernel pointers. */
++struct be7000_rpm_record {
++	u32 magic, magic_inv;
++	u16 version, size;
++	u32 state, state_inv;
++	u32 flags, lcid, rcid;
++	u64 features;
++	u32 tx_head, tx_tail, rx_head, rx_tail;
++	u32 tx_len, rx_len;
++	char name[16];
++	u32 writer_stage, reserved[3];
++};
++
++/* Receiver-owned object; only record is shared with the old kernel. */
++struct be7000_rpm_handoff {
++	struct be7000_rpm_record record;
++	void __iomem *base;
++};
++
++static inline bool be7000_rpm_record_valid(const struct be7000_rpm_record *r)
++{
++	BUILD_BUG_ON(sizeof(*r) != 96);
++	BUILD_BUG_ON(offsetof(struct be7000_rpm_record, state) != 12);
++	BUILD_BUG_ON(offsetof(struct be7000_rpm_record, features) != 32);
++	BUILD_BUG_ON(offsetof(struct be7000_rpm_record, name) != 64);
++	BUILD_BUG_ON(offsetof(struct be7000_rpm_record, writer_stage) != 80);
++
++	return r->magic == BE7000_RGLH_MAGIC && r->magic_inv == ~r->magic &&
++		r->version == 1 && r->size == sizeof(*r) &&
++		r->state == BE7000_RGLH_READY && r->state_inv == ~r->state &&
++		(r->flags & 1) && r->lcid && r->lcid < 65536 &&
++		r->rcid && r->rcid < 65536 &&
++		!memcmp(r->name, BE7000_RGLH_NAME "\0\0\0", sizeof(r->name)) &&
++		r->tx_head == r->tx_tail && r->rx_head == r->rx_tail &&
++		!(r->tx_head & 7) && !(r->rx_tail & 7) &&
++		r->tx_head < r->tx_len && r->rx_tail < r->rx_len;
++}
++
++static inline void be7000_rpm_set_state(struct be7000_rpm_handoff *h, u32 state)
++{
++	writel_relaxed(~state, h->base +
++		       offsetof(struct be7000_rpm_record, state_inv));
++	wmb();
++	writel_relaxed(state, h->base +
++		       offsetof(struct be7000_rpm_record, state));
++	wmb();
++	h->record.state = state;
++	h->record.state_inv = ~state;
++}
++
++#endif
+diff --git a/drivers/rpmsg/qcom_glink_native.c b/drivers/rpmsg/qcom_glink_native.c
+index ee8dac746..61be59326 100644
+--- a/drivers/rpmsg/qcom_glink_native.c
++++ b/drivers/rpmsg/qcom_glink_native.c
+@@ -22,6 +22,7 @@
+ 
+ #include "rpmsg_internal.h"
+ #include "qcom_glink_native.h"
++#include "qcom_glink_be7000.h"
+ 
+ #define GLINK_NAME_SIZE		32
+ #define GLINK_VERSION_1		1
+@@ -125,6 +126,7 @@ struct qcom_glink {
+ 	bool intentless;
+ 
+ 	atomic_t id_advance;
++	struct be7000_rpm_handoff *handoff;
+ };
+ 
+ enum {
+@@ -1267,12 +1269,47 @@ static struct glink_channel *qcom_glink_create_local(struct qcom_glink *glink,
+ 	return ERR_PTR(-ETIMEDOUT);
+ }
+ 
++/* Recreate the retained channel's AP ID and reference, without wire OPENs. */
++static int be7000_glink_adopt(struct qcom_glink *glink,
++			     struct glink_channel *channel)
++{
++	struct be7000_rpm_handoff *h = glink->handoff;
++	unsigned long flags;
++	int ret;
++
++	if (channel->rcid != h->record.rcid)
++		return -EINVAL;
++	if (h->record.state == BE7000_RGLH_ADOPTED)
++		return channel->lcid == h->record.lcid ? 0 : -EINVAL;
++	if (h->record.state != BE7000_RGLH_INJECTED || channel->lcid)
++		return -EINVAL;
++
++	spin_lock_irqsave(&glink->idr_lock, flags);
++	ret = idr_alloc(&glink->lcids, channel, h->record.lcid,
++			h->record.lcid + 1, GFP_ATOMIC);
++	if (ret >= 0) {
++		channel->lcid = ret;
++		kref_get(&channel->refcount);
++	}
++	spin_unlock_irqrestore(&glink->idr_lock, flags);
++	if (ret < 0)
++		return ret;
++	complete_all(&channel->open_ack);
++	be7000_rpm_set_state(h, BE7000_RGLH_ADOPTED);
++	dev_info(glink->dev, "RGLH ADOPTED: lcid=%u rcid=%u\n",
++		 channel->lcid, channel->rcid);
++	return 0;
++}
++
+ /* Remote initiated rpmsg_create_ept */
+ static int qcom_glink_create_remote(struct qcom_glink *glink,
+ 				    struct glink_channel *channel)
+ {
+ 	int ret;
+ 
++	if (glink->handoff && !strcmp(channel->name, BE7000_RGLH_NAME))
++		return be7000_glink_adopt(glink, channel);
++
+ 	qcom_glink_send_open_ack(glink, channel);
+ 
+ 	ret = qcom_glink_send_open_req(glink, channel);
+@@ -1769,11 +1806,34 @@ static void qcom_glink_cancel_rx_work(struct qcom_glink *glink)
+ 		kfree(dcmd);
+ }
+ 
+-struct qcom_glink *qcom_glink_native_probe(struct device *dev,
++/* Same asynchronous OPEN path as v62, using this kernel's own rx_wq. */
++static int be7000_glink_start(struct qcom_glink *glink)
++{
++	struct glink_defer_cmd *dcmd;
++	unsigned long flags;
++
++	dcmd = kzalloc(sizeof(*dcmd) + sizeof(BE7000_RGLH_NAME), GFP_KERNEL);
++	if (!dcmd)
++		return -ENOMEM;
++	dcmd->msg.cmd = cpu_to_le16(RPM_CMD_OPEN);
++	dcmd->msg.param1 = cpu_to_le16(glink->handoff->record.rcid);
++	dcmd->msg.param2 = cpu_to_le32(sizeof(BE7000_RGLH_NAME));
++	memcpy(dcmd->data, BE7000_RGLH_NAME, sizeof(BE7000_RGLH_NAME));
++	spin_lock_irqsave(&glink->rx_lock, flags);
++	list_add_tail(&dcmd->node, &glink->rx_queue);
++	be7000_rpm_set_state(glink->handoff, BE7000_RGLH_INJECTED);
++	spin_unlock_irqrestore(&glink->rx_lock, flags);
++	dev_info(glink->dev, "RGLH INJECTED: queued retained rpm_requests OPEN\n");
++	queue_work(glink->rx_wq, &glink->rx_work);
++	return 0;
++}
++
++static struct qcom_glink *qcom_glink_native_probe_common(struct device *dev,
+ 					   unsigned long features,
+ 					   struct qcom_glink_pipe *rx,
+ 					   struct qcom_glink_pipe *tx,
+-					   bool intentless)
++					   bool intentless,
++					   struct be7000_rpm_handoff *handoff)
+ {
+ 	int irq;
+ 	int ret;
+@@ -1790,6 +1850,7 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
+ 
+ 	glink->features = features;
+ 	glink->intentless = intentless;
++	glink->handoff = handoff;
+ 
+ 	spin_lock_init(&glink->tx_lock);
+ 	spin_lock_init(&glink->rx_lock);
+@@ -1835,14 +1896,34 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
+ 
+ 	glink->irq = irq;
+ 
+-	ret = qcom_glink_send_version(glink);
++	ret = handoff ? be7000_glink_start(glink) : qcom_glink_send_version(glink);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+ 	return glink;
+ }
++
++struct qcom_glink *qcom_glink_native_probe(struct device *dev,
++					 unsigned long features,
++					 struct qcom_glink_pipe *rx,
++					 struct qcom_glink_pipe *tx,
++					 bool intentless)
++{
++	return qcom_glink_native_probe_common(dev, features, rx, tx,
++					    intentless, NULL);
++}
+ EXPORT_SYMBOL_GPL(qcom_glink_native_probe);
+ 
++struct qcom_glink *qcom_glink_native_probe_handoff(struct device *dev,
++					struct qcom_glink_pipe *rx,
++					struct qcom_glink_pipe *tx,
++					struct be7000_rpm_handoff *handoff)
++{
++	return qcom_glink_native_probe_common(dev, handoff->record.features,
++					    rx, tx, true, handoff);
++}
++EXPORT_SYMBOL_GPL(qcom_glink_native_probe_handoff);
++
+ static int qcom_glink_remove_device(struct device *dev, void *data)
+ {
+ 	device_unregister(dev);
+diff --git a/drivers/rpmsg/qcom_glink_native.h b/drivers/rpmsg/qcom_glink_native.h
+index 284d54d37..db68b3345 100644
+--- a/drivers/rpmsg/qcom_glink_native.h
++++ b/drivers/rpmsg/qcom_glink_native.h
+@@ -38,6 +38,12 @@ struct glink_smem_pipe {
+ #define to_smem_pipe(p) container_of(p, struct glink_smem_pipe, native)
+ 
+ struct qcom_glink;
++struct be7000_rpm_handoff;
++
++struct qcom_glink *qcom_glink_native_probe_handoff(struct device *dev,
++					struct qcom_glink_pipe *rx,
++					struct qcom_glink_pipe *tx,
++					struct be7000_rpm_handoff *handoff);
+ 
+ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
+ 					   unsigned long features,
+diff --git a/drivers/rpmsg/qcom_glink_rpm.c b/drivers/rpmsg/qcom_glink_rpm.c
+index f64f45d1a..6d07adcd1 100644
+--- a/drivers/rpmsg/qcom_glink_rpm.c
++++ b/drivers/rpmsg/qcom_glink_rpm.c
+@@ -20,6 +20,7 @@
+ 
+ #include "rpmsg_internal.h"
+ #include "qcom_glink_native.h"
++#include "qcom_glink_be7000.h"
+ 
+ #define RPM_TOC_SIZE		256
+ #define RPM_TOC_MAGIC		0x67727430 /* grt0 */
+@@ -254,9 +255,90 @@ static int glink_rpm_parse_toc(struct device *dev,
+ 	return -EINVAL;
+ }
+ 
++#ifdef CONFIG_BE7000_KEXEC_HANDOFF
++static bool be7000_handoff_enabled;
++
++static int __init be7000_handoff_setup(char *str)
++{
++	return kstrtobool(str, &be7000_handoff_enabled);
++}
++early_param("be7000_handoff", be7000_handoff_setup);
++
++static bool be7000_rpm_reserved(void)
++{
++	struct device_node *parent, *node;
++	struct resource res;
++	bool found = false;
++
++	if (!of_machine_is_compatible("qcom,ipq9574"))
++		return false;
++	parent = of_find_node_by_path("/reserved-memory");
++	if (!parent)
++		return false;
++	for_each_available_child_of_node(parent, node) {
++		if (of_property_read_bool(node, "no-map") &&
++		    !of_address_to_resource(node, 0, &res) &&
++		    res.start == 0x4fb00000 && resource_size(&res) == 0x40000) {
++			found = true;
++			of_node_put(node);
++			break;
++		}
++	}
++	of_node_put(parent);
++	return found;
++}
++
++static struct be7000_rpm_handoff *
++be7000_rpm_prepare(struct device *dev, struct glink_rpm_pipe *rx,
++		   struct glink_rpm_pipe *tx)
++{
++	struct be7000_rpm_handoff *h;
++
++	if (!be7000_handoff_enabled)
++		return NULL;
++	if (!be7000_rpm_reserved()) {
++		dev_err(dev, "RGLH: missing rsvd2 no-map reservation\n");
++		return ERR_PTR(-EINVAL);
++	}
++	h = devm_kzalloc(dev, sizeof(*h), GFP_KERNEL);
++	if (!h)
++		return ERR_PTR(-ENOMEM);
++	h->base = devm_ioremap(dev, BE7000_RGLH_PHYS, sizeof(h->record));
++	if (!h->base)
++		return ERR_PTR(-ENOMEM);
++	memcpy_fromio(&h->record, h->base, sizeof(h->record));
++	if (!be7000_rpm_record_valid(&h->record) ||
++	    h->record.tx_len != tx->native.length ||
++	    h->record.rx_len != rx->native.length) {
++		dev_err(dev, "RGLH: invalid record; refusing cold FIFO reset\n");
++		return ERR_PTR(-EINVAL);
++	}
++	/* Only the RPM-owned cursors may have changed since publication. */
++	if (readl(tx->tail) != h->record.tx_tail ||
++	    readl(rx->head) != h->record.rx_head) {
++		dev_err(dev, "RGLH: RPM cursors moved after old-kernel snapshot\n");
++		return ERR_PTR(-EBUSY);
++	}
++	writel(h->record.tx_head, tx->head);
++	writel(h->record.rx_tail, rx->tail);
++	dev_info(dev, "RGLH READY: lcid=%u rcid=%u tx=%#x rx=%#x\n",
++		 h->record.lcid, h->record.rcid,
++		 h->record.tx_head, h->record.rx_tail);
++	return h;
++}
++#else
++static struct be7000_rpm_handoff *
++be7000_rpm_prepare(struct device *dev, struct glink_rpm_pipe *rx,
++		   struct glink_rpm_pipe *tx)
++{
++	return NULL;
++}
++#endif
++
+ static int glink_rpm_probe(struct platform_device *pdev)
+ {
+ 	struct qcom_glink *glink;
++	struct be7000_rpm_handoff *handoff;
+ 	struct glink_rpm_pipe *rx_pipe;
+ 	struct glink_rpm_pipe *tx_pipe;
+ 	struct device_node *np;
+@@ -294,14 +376,18 @@ static int glink_rpm_probe(struct platform_device *pdev)
+ 	tx_pipe->native.avail = glink_rpm_tx_avail;
+ 	tx_pipe->native.write = glink_rpm_tx_write;
+ 
+-	writel(0, tx_pipe->head);
+-	writel(0, rx_pipe->tail);
+-
+-	glink = qcom_glink_native_probe(&pdev->dev,
+-					0,
+-					&rx_pipe->native,
+-					&tx_pipe->native,
+-					true);
++	handoff = be7000_rpm_prepare(dev, rx_pipe, tx_pipe);
++	if (IS_ERR(handoff))
++		return PTR_ERR(handoff);
++	if (handoff) {
++		glink = qcom_glink_native_probe_handoff(dev, &rx_pipe->native,
++						      &tx_pipe->native, handoff);
++	} else {
++		writel(0, tx_pipe->head);
++		writel(0, rx_pipe->tail);
++		glink = qcom_glink_native_probe(dev, 0, &rx_pipe->native,
++					       &tx_pipe->native, true);
++	}
+ 	if (IS_ERR(glink))
+ 		return PTR_ERR(glink);
+ 
+-- 
+2.43.0
+

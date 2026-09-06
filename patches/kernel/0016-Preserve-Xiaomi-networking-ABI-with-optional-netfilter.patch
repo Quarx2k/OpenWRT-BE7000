@@ -1,0 +1,217 @@
+From b70bf1e31c1399b96b96c7453fb0b89bed50105f Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 8 Sep 2026 21:15:08 +0600
+Subject: [PATCH] Preserve Xiaomi networking ABI with optional netfilter and
+ tunnels
+
+---
+ include/linux/skbuff.h                |  8 ++++----
+ include/net/net_namespace.h           | 20 ++++++++++++++++----
+ include/net/netns/x_tables.h          |  8 --------
+ net/bridge/netfilter/ebtable_broute.c |  6 +++---
+ net/bridge/netfilter/ebtable_filter.c |  8 ++++----
+ net/bridge/netfilter/ebtable_nat.c    |  8 ++++----
+ 6 files changed, 31 insertions(+), 27 deletions(-)
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 19f9c1a9f..9d07703ec 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -811,9 +811,6 @@ struct sk_buff {
+ 	__u8			csum_level:2;
+ 	__u8			csum_not_inet:1;
+ 	__u8			dst_pending_confirm:1;
+-#ifdef CONFIG_IPV6_NDISC_NODETYPE
+-	__u8			ndisc_nodetype:2;
+-#endif
+ 
+ 	__u8			ipvs_property:1;
+ 	__u8			inner_protocol_type:1;
+@@ -844,7 +841,10 @@ struct sk_buff {
+ 	__u8			fast_recycled:1;
+ 	/* Flag for recycle in PPE DS */
+ 	__u8			recycled_for_ds:1;
+-	/* 1 or 3 bit hole */
++	/* Keep Xiaomi recycler bits fixed when SIT/6rd is enabled. */
++#ifdef CONFIG_IPV6_NDISC_NODETYPE
++	__u8			ndisc_nodetype:2;
++#endif
+ 
+ #ifdef CONFIG_NET_SCHED
+ 	__u16			tc_index;	/* traffic control index */
+diff --git a/include/net/net_namespace.h b/include/net/net_namespace.h
+index 167e390ac..40d62e96f 100644
+--- a/include/net/net_namespace.h
++++ b/include/net/net_namespace.h
+@@ -165,9 +165,6 @@ struct net {
+ #ifdef CONFIG_XFRM
+ 	struct netns_xfrm	xfrm;
+ #endif
+-#if IS_ENABLED(CONFIG_IP_VS)
+-	struct netns_ipvs	*ipvs;
+-#endif
+ #if IS_ENABLED(CONFIG_MPLS)
+ 	struct netns_mpls	mpls;
+ #endif
+@@ -176,11 +173,26 @@ struct net {
+ #endif
+ #ifdef CONFIG_XDP_SOCKETS
+ 	struct netns_xdp	xdp;
++#endif
++	struct sock		*diag_nlsk;
++
++	/* Optional services follow the Xiaomi ABI fields.  In the BE7000
++	 * configuration these fit in the existing tail padding, retaining
++	 * both sizeof(struct net) and the offsets used by vendor WLAN.
++	 */
++#if IS_ENABLED(CONFIG_IP_VS)
++	struct netns_ipvs	*ipvs;
+ #endif
+ #if IS_ENABLED(CONFIG_CRYPTO_USER)
+ 	struct sock		*crypto_nlsk;
+ #endif
+-	struct sock		*diag_nlsk;
++#if IS_ENABLED(CONFIG_BRIDGE_NF_EBTABLES)
++	struct {
++		struct ebt_table *broute_table;
++		struct ebt_table *frame_filter;
++		struct ebt_table *frame_nat;
++	} ebt;
++#endif
+ } __randomize_layout;
+ 
+ #include <linux/seq_file_net.h>
+diff --git a/include/net/netns/x_tables.h b/include/net/netns/x_tables.h
+index 9bc5a12fd..068dbbaef 100644
+--- a/include/net/netns/x_tables.h
++++ b/include/net/netns/x_tables.h
+@@ -5,17 +5,9 @@
+ #include <linux/list.h>
+ #include <linux/netfilter_defs.h>
+ 
+-struct ebt_table;
+-
+ struct netns_xt {
+ 	struct list_head tables[NFPROTO_NUMPROTO];
+ 	bool notrack_deprecated_warning;
+ 	bool clusterip_deprecated_warning;
+-#if defined(CONFIG_BRIDGE_NF_EBTABLES) || \
+-    defined(CONFIG_BRIDGE_NF_EBTABLES_MODULE)
+-	struct ebt_table *broute_table;
+-	struct ebt_table *frame_filter;
+-	struct ebt_table *frame_nat;
+-#endif
+ };
+ #endif
+diff --git a/net/bridge/netfilter/ebtable_broute.c b/net/bridge/netfilter/ebtable_broute.c
+index 32bc28210..d8c0a4f98 100644
+--- a/net/bridge/netfilter/ebtable_broute.c
++++ b/net/bridge/netfilter/ebtable_broute.c
+@@ -66,7 +66,7 @@ static unsigned int ebt_broute(void *priv, struct sk_buff *skb,
+ 			   NFPROTO_BRIDGE, s->in, NULL, NULL,
+ 			   s->net, NULL);
+ 
+-	ret = ebt_do_table(skb, &state, state.net->xt.broute_table);
++	ret = ebt_do_table(skb, &state, state.net->ebt.broute_table);
+ 
+ 	if (ret != NF_DROP)
+ 		return ret;
+@@ -102,7 +102,7 @@ static const struct nf_hook_ops ebt_ops_broute = {
+ static int __net_init broute_net_init(struct net *net)
+ {
+ 	return ebt_register_table(net, &broute_table, &ebt_ops_broute,
+-				  &net->xt.broute_table);
++				  &net->ebt.broute_table);
+ }
+ 
+ static void __net_exit broute_net_pre_exit(struct net *net)
+@@ -112,7 +112,7 @@ static void __net_exit broute_net_pre_exit(struct net *net)
+ 
+ static void __net_exit broute_net_exit(struct net *net)
+ {
+-	ebt_unregister_table(net, net->xt.broute_table);
++	ebt_unregister_table(net, net->ebt.broute_table);
+ }
+ 
+ static struct pernet_operations broute_net_ops = {
+diff --git a/net/bridge/netfilter/ebtable_filter.c b/net/bridge/netfilter/ebtable_filter.c
+index bcf982e12..734134add 100644
+--- a/net/bridge/netfilter/ebtable_filter.c
++++ b/net/bridge/netfilter/ebtable_filter.c
+@@ -62,14 +62,14 @@ static unsigned int
+ ebt_in_hook(void *priv, struct sk_buff *skb,
+ 	    const struct nf_hook_state *state)
+ {
+-	return ebt_do_table(skb, state, state->net->xt.frame_filter);
++	return ebt_do_table(skb, state, state->net->ebt.frame_filter);
+ }
+ 
+ static unsigned int
+ ebt_out_hook(void *priv, struct sk_buff *skb,
+ 	     const struct nf_hook_state *state)
+ {
+-	return ebt_do_table(skb, state, state->net->xt.frame_filter);
++	return ebt_do_table(skb, state, state->net->ebt.frame_filter);
+ }
+ 
+ static const struct nf_hook_ops ebt_ops_filter[] = {
+@@ -96,7 +96,7 @@ static const struct nf_hook_ops ebt_ops_filter[] = {
+ static int __net_init frame_filter_net_init(struct net *net)
+ {
+ 	return ebt_register_table(net, &frame_filter, ebt_ops_filter,
+-				  &net->xt.frame_filter);
++				  &net->ebt.frame_filter);
+ }
+ 
+ static void __net_exit frame_filter_net_pre_exit(struct net *net)
+@@ -106,7 +106,7 @@ static void __net_exit frame_filter_net_pre_exit(struct net *net)
+ 
+ static void __net_exit frame_filter_net_exit(struct net *net)
+ {
+-	ebt_unregister_table(net, net->xt.frame_filter);
++	ebt_unregister_table(net, net->ebt.frame_filter);
+ }
+ 
+ static struct pernet_operations frame_filter_net_ops = {
+diff --git a/net/bridge/netfilter/ebtable_nat.c b/net/bridge/netfilter/ebtable_nat.c
+index 0d092773f..cebde3925 100644
+--- a/net/bridge/netfilter/ebtable_nat.c
++++ b/net/bridge/netfilter/ebtable_nat.c
+@@ -62,14 +62,14 @@ static unsigned int
+ ebt_nat_in(void *priv, struct sk_buff *skb,
+ 	   const struct nf_hook_state *state)
+ {
+-	return ebt_do_table(skb, state, state->net->xt.frame_nat);
++	return ebt_do_table(skb, state, state->net->ebt.frame_nat);
+ }
+ 
+ static unsigned int
+ ebt_nat_out(void *priv, struct sk_buff *skb,
+ 	    const struct nf_hook_state *state)
+ {
+-	return ebt_do_table(skb, state, state->net->xt.frame_nat);
++	return ebt_do_table(skb, state, state->net->ebt.frame_nat);
+ }
+ 
+ static const struct nf_hook_ops ebt_ops_nat[] = {
+@@ -96,7 +96,7 @@ static const struct nf_hook_ops ebt_ops_nat[] = {
+ static int __net_init frame_nat_net_init(struct net *net)
+ {
+ 	return ebt_register_table(net, &frame_nat, ebt_ops_nat,
+-				  &net->xt.frame_nat);
++				  &net->ebt.frame_nat);
+ }
+ 
+ static void __net_exit frame_nat_net_pre_exit(struct net *net)
+@@ -106,7 +106,7 @@ static void __net_exit frame_nat_net_pre_exit(struct net *net)
+ 
+ static void __net_exit frame_nat_net_exit(struct net *net)
+ {
+-	ebt_unregister_table(net, net->xt.frame_nat);
++	ebt_unregister_table(net, net->ebt.frame_nat);
+ }
+ 
+ static struct pernet_operations frame_nat_net_ops = {
+-- 
+2.43.0
+

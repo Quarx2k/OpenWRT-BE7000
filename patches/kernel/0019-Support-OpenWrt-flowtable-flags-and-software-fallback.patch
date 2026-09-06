@@ -1,0 +1,125 @@
+From e2ab1cfcd0b6a06b603a55ca80f5710e109868b8 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Wed, 9 Sep 2026 04:45:08 +0600
+Subject: [PATCH] Support OpenWrt flowtable flags and software fallback
+
+firewall4 emits the flowtable counter flag for both software and hardware
+offloading. QSDK rejected that flag while returning success, so the later
+flow offload rule failed and the LAN firewall could remain unconfigured
+after boot. Accept the flag: this tree already accounts software flows in
+conntrack.
+
+Validate flags before initialization, return EINVAL for unknown bits, and
+balance the hardware module reference on creation and cleanup failures.
+
+Allow devices without ndo_flow_offload to retain software processing.
+The hardware path already checks this callback before queuing work. This
+matches the fallback policy in OpenWrt's 701-netfilter-nf_tables-ignore-
+EOPNOTSUPP-on-flowtable-d.patch without adding a PPE hardware backend.
+
+Validated with native signed kmod APKs on BE7000: all four combinations
+of counter/offload flags pass nft checks, repeated creation and cleanup
+leave the hardware module reference count unchanged, and fw4 check passes
+with both options selected.
+---
+ include/net/netfilter/nf_flow_table.h |  1 +
+ net/netfilter/nf_flow_table_core.c    | 14 ++++++++------
+ net/netfilter/nf_tables_api.c         | 26 ++++++++++++++------------
+ 3 files changed, 23 insertions(+), 18 deletions(-)
+
+diff --git a/include/net/netfilter/nf_flow_table.h b/include/net/netfilter/nf_flow_table.h
+index b0c3d3367..c1a382d34 100644
+--- a/include/net/netfilter/nf_flow_table.h
++++ b/include/net/netfilter/nf_flow_table.h
+@@ -23,6 +23,7 @@ struct nf_flowtable_type {
+ 
+ enum nf_flowtable_flags {
+ 	NF_FLOWTABLE_F_HW		= 0x1,
++	NF_FLOWTABLE_F_COUNTER		= 0x2,
+ };
+ 
+ struct nf_flowtable {
+diff --git a/net/netfilter/nf_flow_table_core.c b/net/netfilter/nf_flow_table_core.c
+index 9df6f4945..334769761 100644
+--- a/net/netfilter/nf_flow_table_core.c
++++ b/net/netfilter/nf_flow_table_core.c
+@@ -549,12 +549,6 @@ int nf_flow_table_init(struct nf_flowtable *flowtable)
+ {
+ 	int err;
+ 
+-	if (flowtable->flags & NF_FLOWTABLE_F_HW) {
+-		err = nf_flow_offload_hw_init(flowtable);
+-		if (err)
+-			return err;
+-	}
+-
+ 	INIT_DEFERRABLE_WORK(&flowtable->gc_work, nf_flow_offload_work_gc);
+ 
+ 	err = rhashtable_init(&flowtable->rhashtable,
+@@ -562,6 +556,14 @@ int nf_flow_table_init(struct nf_flowtable *flowtable)
+ 	if (err < 0)
+ 		return err;
+ 
++	if (flowtable->flags & NF_FLOWTABLE_F_HW) {
++		err = nf_flow_offload_hw_init(flowtable);
++		if (err) {
++			rhashtable_destroy(&flowtable->rhashtable);
++			return err;
++		}
++	}
++
+ 	queue_delayed_work(system_power_efficient_wq,
+ 			   &flowtable->gc_work, HZ);
+ 
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index 5738e1716..4eaca57cc 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -5743,12 +5743,9 @@ static int nf_tables_flowtable_parse_hook(const struct nft_ctx *ctx,
+ 	if (err < 0)
+ 		return err;
+ 
+-	for (i = 0; i < n; i++) {
+-		if (flowtable->data.flags & NF_FLOWTABLE_F_HW &&
+-		    !dev_array[i]->netdev_ops->ndo_flow_offload) {
+-			return -EOPNOTSUPP;
+-		}
+-	}
++	/* Hardware offload is optional per path; unsupported devices keep
++	 * using the software hooks, as in current OpenWrt flowtables.
++	 */
+ 
+ 	ops = kcalloc(n, sizeof(struct nf_hook_ops), GFP_KERNEL);
+ 	if (!ops)
+@@ -5882,17 +5879,22 @@ static int nf_tables_newflowtable(struct net *net, struct sock *nlsk,
+ 	flowtable->data.type = type;
+ 	write_pnet(&flowtable->data.ft_net, net);
+ 
+-	err = type->init(&flowtable->data);
+-	if (err < 0)
+-		goto err3;
+-
+ 	if (nla[NFTA_FLOWTABLE_FLAGS]) {
+ 		flowtable->data.flags =
+ 			ntohl(nla_get_be32(nla[NFTA_FLOWTABLE_FLAGS]));
+-		if (flowtable->data.flags & ~NF_FLOWTABLE_F_HW)
+-			goto err4;
++		/* QSDK already counts software flows in conntrack. */
++		if (flowtable->data.flags & ~(NF_FLOWTABLE_F_HW |
++					      NF_FLOWTABLE_F_COUNTER)) {
++			err = -EINVAL;
++			goto err3;
++		}
+ 	}
+ 
++	/* init() needs the hardware flag to take its module reference. */
++	err = type->init(&flowtable->data);
++	if (err < 0)
++		goto err3;
++
+ 	err = nf_tables_flowtable_parse_hook(&ctx, nla[NFTA_FLOWTABLE_HOOK],
+ 					     flowtable);
+ 	if (err < 0)
+-- 
+2.43.0
+

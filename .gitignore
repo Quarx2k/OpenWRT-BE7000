@@ -1,0 +1,17 @@
+.installer-venv/
+.build-venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+*.img
+*.img.gz
+*.tar.gz
+*.ko
+*.o
+*.exe
+userdata/
+device/
+logs/
+loaded-state.txt

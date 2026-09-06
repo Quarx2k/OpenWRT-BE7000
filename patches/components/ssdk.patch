@@ -1,0 +1,17 @@
+diff --git a/src/init/ssdk_hppe.c b/src/init/ssdk_hppe.c
+index c3fa626..4db8ab3 100755
+--- a/src/init/ssdk_hppe.c
++++ b/src/init/ssdk_hppe.c
+@@ -15,6 +15,7 @@
+  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
+ 
++#include <linux/in.h>
+ #include "ssdk_init.h"
+ #include "ssdk_dts.h"
+ #include "adpt.h"
+@@ -1440,4 +1441,3 @@ sw_error_t qca_hppe_hw_init(ssdk_init_cfg *cfg, a_uint32_t dev_id)
+ 
+ 	return rv;
+ }
+-

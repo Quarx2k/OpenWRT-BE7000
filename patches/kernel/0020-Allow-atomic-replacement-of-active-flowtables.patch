@@ -1,0 +1,38 @@
+From 50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Wed, 9 Sep 2026 04:59:27 +0600
+Subject: [PATCH] Allow atomic replacement of active flowtables
+
+firewall4 reload flushes its rules, deletes the old flowtable and creates
+the replacement in one transaction. Ignore flowtables deactivated in the
+next generation when checking whether a device hook is already occupied.
+Otherwise an existing table makes fw4 check and reload fail with EBUSY.
+
+Use the same generation check as upstream nft_register_flowtable_net_hooks.
+Keep rejecting conflicts with flowtables that remain active.
+
+Verified on BE7000 with the signed kmod-nft-core r3 package: boot with both
+flow-offload options enabled, repeated fw4 check and actual firewall reload,
+switch to software-only offload, and return to PPE/ECM all pass. Hardware
+module references remain balanced. No userspace or ABI layout changes.
+---
+ net/netfilter/nf_tables_api.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index 4eaca57cc..cb318f892 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -5905,6 +5905,9 @@ static int nf_tables_newflowtable(struct net *net, struct sock *nlsk,
+ 			continue;
+ 
+ 		list_for_each_entry(ft, &table->flowtables, list) {
++			if (!nft_is_active_next(net, ft))
++				continue;
++
+ 			for (k = 0; k < ft->ops_len; k++) {
+ 				if (!ft->ops[k].dev)
+ 					continue;
+-- 
+2.43.0
+

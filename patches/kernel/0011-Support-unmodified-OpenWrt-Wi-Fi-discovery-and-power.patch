@@ -1,0 +1,184 @@
+From 6f05df83be5893bcecce6fdfbef9faf74d79aca9 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 18:06:46 +0600
+Subject: [PATCH] Support unmodified OpenWrt Wi-Fi interface discovery and
+ power lists
+
+Keep QSDK raw AP control netdevs registered for vendor requests, but omit them from nl80211 interface enumeration/notifications and the phy80211 sysfs links used for data-interface discovery. Match by device type, not interface names; preserve monitor and Ethernet VAP visibility.
+
+Translate fixed zero dBm through the vendor half-dBm encoding and keep automatic state separate. Restore the 2 GHz limit before the legacy automatic callback clears its fixed-power flag. These changes remove the need for BE7000 iwinfo and hostap interface-selection patches.
+---
+ net/wireless/core.c           |  5 +++-
+ net/wireless/core.h           |  2 +-
+ net/wireless/nl80211.c        |  5 ++++
+ net/wireless/qcom-he-compat.c | 47 +++++++++++++++++++++++++++--------
+ net/wireless/qcom-he-compat.h |  2 ++
+ 5 files changed, 48 insertions(+), 13 deletions(-)
+
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index 5d151e8f8..2eb05f562 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -30,6 +30,7 @@
+ #include "debugfs.h"
+ #include "wext-compat.h"
+ #include "rdev-ops.h"
++#include "qcom-he-compat.h"
+ 
+ /* name for sysfs, %d is appended */
+ #define PHY_NAME "phy"
+@@ -427,6 +428,7 @@ struct wiphy *wiphy_new_nm(const struct cfg80211_ops *ops, int sizeof_priv,
+ 		return NULL;
+ 
+ 	rdev->ops = ops;
++	rdev->qcom_txpower_dbm = -1;
+ 
+ 	rdev->wiphy_idx = atomic_inc_return(&wiphy_counter);
+ 
+@@ -1304,7 +1306,8 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
+ 		 * called within code protected by it when interfaces
+ 		 * are added with nl80211.
+ 		 */
+-		if (sysfs_create_link(&dev->dev.kobj, &rdev->wiphy.dev.kobj,
++		if (!qcom_is_radio_control(rdev, wdev) &&
++		    sysfs_create_link(&dev->dev.kobj, &rdev->wiphy.dev.kobj,
+ 				      "phy80211")) {
+ 			pr_err("failed to add phy80211 symlink to netdev!\n");
+ 		}
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index 136a497fa..e5d473316 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -103,7 +103,7 @@ struct cfg80211_registered_device {
+ 	struct cfg80211_chan_def cac_done_chandef;
+ 	struct work_struct propagate_cac_done_wk;
+ 
+-	/* QSDK radio-wide power request, dBm; 0 means automatic. RTNL held.
++	/* QSDK radio-wide power request, dBm; -1 means automatic. RTNL held.
+ 	 * Keep this state private: closed drivers only see struct wiphy.
+ 	 */
+ 	int qcom_txpower_dbm;
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 65c153da8..632fa49a0 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -3409,6 +3409,8 @@ static int nl80211_dump_interface(struct sk_buff *skb, struct netlink_callback *
+ 		if_idx = 0;
+ 
+ 		list_for_each_entry(wdev, &rdev->wiphy.wdev_list, list) {
++			if (qcom_is_radio_control(rdev, wdev))
++				continue;
+ 			if (if_idx < if_start) {
+ 				if_idx++;
+ 				continue;
+@@ -15046,6 +15048,9 @@ void nl80211_notify_iface(struct cfg80211_registered_device *rdev,
+ {
+ 	struct sk_buff *msg;
+ 
++	if (qcom_is_radio_control(rdev, wdev))
++		return;
++
+ 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+ 	if (!msg)
+ 		return;
+diff --git a/net/wireless/qcom-he-compat.c b/net/wireless/qcom-he-compat.c
+index 1fce8eed5..1fde099aa 100644
+--- a/net/wireless/qcom-he-compat.c
++++ b/net/wireless/qcom-he-compat.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /* BE7000 stock2024 QSDK control adapter. No closed-driver ABI extensions. */
+ #include <linux/module.h>
++#include <linux/if_arp.h>
+ #include <asm/unaligned.h>
+ #include "core.h"
+ #include "qcom-he-compat.h"
+@@ -26,6 +27,18 @@ bool qcom_he_compat_active(struct cfg80211_registered_device *rdev)
+ 	return be7000_he_compat && qcom_he_command(&rdev->wiphy);
+ }
+ 
++/* QSDK registers raw radio-control netdevs as wireless interfaces. Keep
++ * them for direct vendor requests, but do not advertise them as usable VAPs.
++ * Match raw AP controls only; Ethernet data and monitor VAPs stay visible.
++ */
++bool qcom_is_radio_control(struct cfg80211_registered_device *rdev,
++			   struct wireless_dev *wdev)
++{
++	return qcom_he_compat_active(rdev) && wdev->netdev &&
++	       wdev->iftype == NL80211_IFTYPE_AP &&
++	       wdev->netdev->type == ARPHRD_IEEE80211;
++}
++
+ /* The outer policy validates widths/ranges. Parse again for semantic checks. */
+ int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg)
+ {
+@@ -216,19 +229,31 @@ int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
+ 
+ 	if (!rdev->ops->set_tx_power || !chandef->chan)
+ 		return -EOPNOTSUPP;
+-	if (dbm && chandef->chan->max_power < 1)
++	if (dbm >= 0 && chandef->chan->max_power < 0)
+ 		return -EOPNOTSUPP;
+-	if (dbm)
++	if (dbm >= 0)
+ 		dbm = min(dbm, chandef->chan->max_power);
+-	if (dbm < 0)
+-		return -EOPNOTSUPP;
+-	/* The QSDK callback only handles FIXED and expects whole dBm.
+-	 * Its legacy value 0 restores automatic power, not 0 dBm.
++	/* The legacy automatic branch only restores the 5 GHz limit. Restore
++	 * the 2 GHz limit explicitly before it clears the fixed-power flag.
++	 */
++	if (dbm < 0 && chandef->chan->band == NL80211_BAND_2GHZ) {
++		if (chandef->chan->max_power < 1)
++			return -EOPNOTSUPP;
++		err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
++					    NL80211_TX_POWER_FIXED,
++					    chandef->chan->max_power);
++		if (err)
++			return err;
++	}
++	/* QSDK normally takes whole dBm; literal zero restores automatic.
++	 * Its >255 encoding passes the low byte as half-dBm while keeping
++	 * the fixed-power flag. Thus 0x100 represents fixed 0 dBm.
+ 	 */
+ 	err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
+-				    NL80211_TX_POWER_FIXED, dbm);
++				    NL80211_TX_POWER_FIXED,
++				    dbm < 0 ? 0 : dbm ? dbm : 0x100);
+ 	if (!err)
+-		pr_info("cfg80211: BE7000 power %s %d dBm (0=auto) applied\n",
++		pr_info("cfg80211: BE7000 power %s %d dBm (-1=auto) applied\n",
+ 			wdev->netdev->name, dbm);
+ 	return err;
+ }
+@@ -243,12 +268,12 @@ int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
+ 	ASSERT_RTNL();
+ 	switch (type) {
+ 	case NL80211_TX_POWER_AUTOMATIC:
+-		dbm = 0;
++		dbm = -1;
+ 		break;
+ 	case NL80211_TX_POWER_FIXED:
+ 	case NL80211_TX_POWER_LIMITED:
+-		/* QSDK cannot represent fixed 0 dBm or fractional dBm. */
+-		if (mbm < 100 || mbm % 100)
++		/* Keep the standard integer-dBm range used by OpenWrt. */
++		if (mbm < 0 || mbm % 100)
+ 			return -EOPNOTSUPP;
+ 		dbm = mbm / 100;
+ 		for (b = 0; b < NUM_NL80211_BANDS; b++) {
+diff --git a/net/wireless/qcom-he-compat.h b/net/wireless/qcom-he-compat.h
+index 8d0ec229a..eebf988d0 100644
+--- a/net/wireless/qcom-he-compat.h
++++ b/net/wireless/qcom-he-compat.h
+@@ -27,4 +27,6 @@ int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
+ int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
+ 			struct wireless_dev *wdev,
+ 			const struct cfg80211_chan_def *chandef, int dbm);
++bool qcom_is_radio_control(struct cfg80211_registered_device *rdev,
++			   struct wireless_dev *wdev);
+ #endif
+-- 
+2.43.0
+

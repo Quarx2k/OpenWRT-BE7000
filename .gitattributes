@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.patch text eol=lf -whitespace
+*.cmd text eol=crlf
+*.png binary

@@ -1,0 +1,28 @@
+From bedaf785fe4317410e5e0af1dfe2cdc1fd18e9e9 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 8 Sep 2026 06:23:32 +0600
+Subject: [PATCH] Accept the Xiaomi wireless station departure event
+
+The January 2026 kernel describes event 0x8C0A as IW_HEADER_TYPE_ADDR. The vendor WLAN module sends the same sockaddr as IWEVEXPIRED. Restore the descriptor so WEXT delivers the event without an unknown-event error.
+---
+ net/wireless/wext-core.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/wireless/wext-core.c b/net/wireless/wext-core.c
+index 76a80a416..bcdf24af3 100644
+--- a/net/wireless/wext-core.c
++++ b/net/wireless/wext-core.c
+@@ -280,6 +280,10 @@ static const struct iw_ioctl_description standard_event[] = {
+ 	[IW_EVENT_IDX(IWEVEXPIRED)] = {
+ 		.header_type	= IW_HEADER_TYPE_ADDR,
+ 	},
++	/* Xiaomi/QSDK sends this address event alongside IWEVEXPIRED. */
++	[IW_EVENT_IDX(0x8C0A)] = {
++		.header_type	= IW_HEADER_TYPE_ADDR,
++	},
+ 	[IW_EVENT_IDX(IWEVGENIE)] = {
+ 		.header_type	= IW_HEADER_TYPE_POINT,
+ 		.token_size	= 1,
+-- 
+2.43.0
+

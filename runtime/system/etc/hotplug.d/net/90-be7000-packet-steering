@@ -1,0 +1,4 @@
+#!/bin/sh
+
+[ "${ACTION:-}" = add ] || exit 0
+/etc/init.d/packet_steering reload

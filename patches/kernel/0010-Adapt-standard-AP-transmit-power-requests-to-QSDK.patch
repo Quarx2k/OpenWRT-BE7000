@@ -1,0 +1,156 @@
+From 04fac636edcf234238a0f843d3c83bdbf22da9ee Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 17:19:37 +0600
+Subject: [PATCH] Adapt standard AP transmit power requests to QSDK callbacks
+
+Translate mBm to the vendor whole-dBm setter and route PHY requests through active AP VAPs. Replay pre-AP requests after START_AP using private cfg80211 state, without changing the closed driver ABI. Honor channel power limits and reject unrepresentable fixed values; legacy zero restores automatic power.
+---
+ net/wireless/core.h           |  5 +++
+ net/wireless/nl80211.c        | 11 +++++-
+ net/wireless/qcom-he-compat.c | 73 +++++++++++++++++++++++++++++++++++
+ net/wireless/qcom-he-compat.h |  5 +++
+ 4 files changed, 93 insertions(+), 1 deletion(-)
+
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index eb2cd645f..136a497fa 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -103,6 +103,11 @@ struct cfg80211_registered_device {
+ 	struct cfg80211_chan_def cac_done_chandef;
+ 	struct work_struct propagate_cac_done_wk;
+ 
++	/* QSDK radio-wide power request, dBm; 0 means automatic. RTNL held.
++	 * Keep this state private: closed drivers only see struct wiphy.
++	 */
++	int qcom_txpower_dbm;
++
+ 	/* must be last because of the way we do wiphy_priv(),
+ 	 * and it should at least be aligned to NETDEV_ALIGN */
+ 	struct wiphy wiphy __aligned(NETDEV_ALIGN);
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 277617c43..65c153da8 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -3054,7 +3054,10 @@ static int nl80211_set_wiphy(struct sk_buff *skb, struct genl_info *info)
+ 			mbm = nla_get_u32(info->attrs[idx]);
+ 		}
+ 
+-		result = rdev_set_tx_power(rdev, txp_wdev, type, mbm);
++		if (qcom_he_compat_active(rdev))
++			result = qcom_set_tx_power(rdev, type, mbm);
++		else
++			result = rdev_set_tx_power(rdev, txp_wdev, type, mbm);
+ 		if (result)
+ 			return result;
+ 	}
+@@ -4972,6 +4975,12 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 
+ 	wdev_lock(wdev);
+ 	err = rdev_start_ap(rdev, dev, &params);
++	if (!err && qcom_he) {
++		err = qcom_apply_tx_power(rdev, wdev, &params.chandef,
++					 rdev->qcom_txpower_dbm);
++		if (err)
++			rdev_stop_ap(rdev, dev);
++	}
+ 	if (!err) {
+ 		wdev->preset_chandef = params.chandef;
+ 		wdev->beacon_interval = params.beacon_interval;
+diff --git a/net/wireless/qcom-he-compat.c b/net/wireless/qcom-he-compat.c
+index 6f5c3f2ab..1fce8eed5 100644
+--- a/net/wireless/qcom-he-compat.c
++++ b/net/wireless/qcom-he-compat.c
+@@ -207,3 +207,76 @@ int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy)
+ 		features[7] |= BIT(3); /* modern FILS_CRYPTO_OFFLOAD = 59 */
+ 	return nla_put(msg, NL80211_ATTR_EXT_FEATURES, sizeof(features), features);
+ }
++
++int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
++			struct wireless_dev *wdev,
++			const struct cfg80211_chan_def *chandef, int dbm)
++{
++	int err;
++
++	if (!rdev->ops->set_tx_power || !chandef->chan)
++		return -EOPNOTSUPP;
++	if (dbm && chandef->chan->max_power < 1)
++		return -EOPNOTSUPP;
++	if (dbm)
++		dbm = min(dbm, chandef->chan->max_power);
++	if (dbm < 0)
++		return -EOPNOTSUPP;
++	/* The QSDK callback only handles FIXED and expects whole dBm.
++	 * Its legacy value 0 restores automatic power, not 0 dBm.
++	 */
++	err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
++				    NL80211_TX_POWER_FIXED, dbm);
++	if (!err)
++		pr_info("cfg80211: BE7000 power %s %d dBm (0=auto) applied\n",
++			wdev->netdev->name, dbm);
++	return err;
++}
++
++int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
++		      enum nl80211_tx_power_setting type, int mbm)
++{
++	struct wireless_dev *wdev;
++	struct ieee80211_supported_band *band;
++	int dbm, max_dbm = 0, b, c, err;
++
++	ASSERT_RTNL();
++	switch (type) {
++	case NL80211_TX_POWER_AUTOMATIC:
++		dbm = 0;
++		break;
++	case NL80211_TX_POWER_FIXED:
++	case NL80211_TX_POWER_LIMITED:
++		/* QSDK cannot represent fixed 0 dBm or fractional dBm. */
++		if (mbm < 100 || mbm % 100)
++			return -EOPNOTSUPP;
++		dbm = mbm / 100;
++		for (b = 0; b < NUM_NL80211_BANDS; b++) {
++			band = rdev->wiphy.bands[b];
++			if (!band)
++				continue;
++			for (c = 0; c < band->n_channels; c++)
++				if (!(band->channels[c].flags & IEEE80211_CHAN_DISABLED))
++					max_dbm = max(max_dbm, band->channels[c].max_power);
++		}
++		if (dbm > max_dbm)
++			return -EINVAL;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	/* OpenWrt sets power on the PHY before creating AP interfaces. Cache
++	 * the request and replay it on START_AP. Existing APs update now.
++	 * The vendor setter changes the radio's power limit, not per-VAP RF.
++	 */
++	list_for_each_entry(wdev, &rdev->wiphy.wdev_list, list) {
++		if (!wdev->netdev || !wdev->beacon_interval)
++			continue;
++		err = qcom_apply_tx_power(rdev, wdev, &wdev->chandef, dbm);
++		if (err)
++			return err;
++	}
++	rdev->qcom_txpower_dbm = dbm;
++	return 0;
++}
+diff --git a/net/wireless/qcom-he-compat.h b/net/wireless/qcom-he-compat.h
+index fcc6b6ec2..8d0ec229a 100644
+--- a/net/wireless/qcom-he-compat.h
++++ b/net/wireless/qcom-he-compat.h
+@@ -22,4 +22,9 @@ int qcom_he_apply(struct cfg80211_registered_device *rdev,
+ int qcom_eht_put_cap(struct sk_buff *msg,
+ 		     const struct ieee80211_sta_eht_cap *cap);
+ int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy);
++int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
++		      enum nl80211_tx_power_setting type, int mbm);
++int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
++			struct wireless_dev *wdev,
++			const struct cfg80211_chan_def *chandef, int dbm);
+ #endif
+-- 
+2.43.0
+

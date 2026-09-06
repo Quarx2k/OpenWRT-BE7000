@@ -1,0 +1,43 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+
+msgid "Boot system"
+msgstr "Загрузка системы"
+
+msgid "Could not update boot settings."
+msgstr "Не удалось изменить настройки загрузки."
+
+msgid "Without the USB drive, the router starts Xiaomi firmware. Three unconfirmed OpenWrt boots pause automatic startup."
+msgstr "Без USB-накопителя роутер загружает прошивку Xiaomi. После трёх неподтверждённых загрузок OpenWrt автозапуск приостанавливается."
+
+msgid "Autostart is not installed. Run the installer in Xiaomi firmware and select automatic startup."
+msgstr "Автозапуск не установлен. Запустите установщик в прошивке Xiaomi и выберите автоматическую загрузку."
+
+msgid "OpenWrt autostart: %s"
+msgstr "Автозапуск OpenWrt: %s"
+
+msgid "Unconfirmed attempts: %d / 3"
+msgstr "Неподтверждённые попытки: %d / 3"
+
+msgid "The next boot will stay in Xiaomi firmware."
+msgstr "При следующей загрузке роутер останется в прошивке Xiaomi."
+
+msgid "Disable autostart"
+msgstr "Отключить автозапуск"
+
+msgid "Enable autostart"
+msgstr "Включить автозапуск"
+
+msgid "Reset attempts and enable"
+msgstr "Сбросить попытки и включить"
+
+msgid "Reboot into Xiaomi"
+msgstr "Перезагрузить в Xiaomi"
+
+msgid "The USB drive can stay connected. OpenWrt autostart will be skipped once."
+msgstr "USB-накопитель можно оставить подключённым. Автозапуск OpenWrt будет пропущен один раз."
+
+msgid "Reconnect to Xiaomi firmware at its configured LAN address."
+msgstr "Подключитесь к прошивке Xiaomi по её настроенному LAN-адресу."

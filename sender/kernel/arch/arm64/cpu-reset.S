@@ -1,0 +1,68 @@
+/*
+ * CPU reset routines
+ *
+ * Copyright (C) 2001 Deep Blue Solutions Ltd.
+ * Copyright (C) 2012 ARM Ltd.
+ * Copyright (C) 2015 Huawei Futurewei Technologies.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+#include <linux/linkage.h>
+#include <asm/assembler.h>
+#include <asm/sysreg.h>
+#include <asm/virt.h>
+
+.text
+
+.macro be7000_breadcrumb stage:req
+	movz	x9, #0xf008
+	movk	x9, #0x4fb3, lsl #16
+	mov	x10, #\stage
+	str	w10, [x9]
+	mvn	w11, w10
+	str	w11, [x9, #4]
+	dsb	sy
+.endm
+
+/*
+ * __cpu_soft_restart(el2_switch, entry, arg0, arg1, arg2) - Helper for
+ * cpu_soft_restart.
+ *
+ * @el2_switch: Flag to indicate a swich to EL2 is needed.
+ * @entry: Location to jump to for soft reset.
+ * arg0: First argument passed to @entry.
+ * arg1: Second argument passed to @entry.
+ * arg2: Third argument passed to @entry.
+ *
+ * Put the CPU into the same state as it would be if it had been reset, and
+ * branch to what would be the reset vector. It must be executed with the
+ * flat identity mapping.
+ */
+ENTRY(__cpu_soft_restart)
+	/* Clear sctlr_el1 flags. */
+	mrs	x12, sctlr_el1
+	ldr	x13, =SCTLR_ELx_FLAGS
+	bic	x12, x12, x13
+	msr	sctlr_el1, x12
+	isb
+	be7000_breadcrumb 0x400
+
+	cbz	x0, 1f				// el2_switch?
+	mov	x0, #HVC_SOFT_RESTART
+	hvc	#0				// no return
+
+1:	mov	x18, x1				// entry
+	mov	x0, x2				// arg0
+	mov	x1, x3				// arg1
+	mov	x2, x4				// arg2
+	br	x18
+ENDPROC(__cpu_soft_restart)
+
+/* Tiny physical-call target used to validate the module-owned identity map. */
+ENTRY(kexec_idmap_probe_phys)
+	mov	x0, #0x6b78
+	ret
+ENDPROC(kexec_idmap_probe_phys)

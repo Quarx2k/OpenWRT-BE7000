@@ -1,0 +1,22 @@
+#!/bin/sh
+
+. /lib/functions/system.sh
+. /lib/functions/uci-defaults.sh
+
+[ "$(board_name)" = 'xiaomi,be7000' ] || exit 0
+
+board_config_update
+ucidef_set_board_id 'xiaomi,be7000'
+ucidef_set_model_name 'Xiaomi BE7000'
+ucidef_set_interface_lan 'eth0 eth1 eth2 eth3'
+
+json_select_object wlan
+json_select_object phy0
+json_add_string path 'platform/soc/c000000.wifi'
+json_select ..
+json_select_object phy1
+json_add_string path 'soc/20000000.pci/pci0003:00/0003:00:00.0/0003:01:00.0'
+json_select ..
+json_select ..
+
+board_config_flush

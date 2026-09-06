@@ -1,0 +1,52 @@
+diff --git a/drv/ppe_drv/tun/ppe_drv_tun.c b/drv/ppe_drv/tun/ppe_drv_tun.c
+index 8c1455a..d370dd0 100644
+--- a/drv/ppe_drv/tun/ppe_drv_tun.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun.c
+@@ -17,8 +17,10 @@
+ #include <linux/ip.h>
+ #include <net/vxlan.h>
+ #include <fal/fal_ip.h>
++#ifndef BE7000_RAM_DIAGNOSTIC
+ #include <nat46/nat46-core.h>
+ #include <nat46/nat46-netdev.h>
++#endif
+ #include <fal_tunnel.h>
+ #include <fal_mapt.h>
+ #include <fal_port_ctrl.h>
+@@ -617,6 +619,10 @@ bool ppe_drv_tun_detach_mapt_v4_to_v6(struct ppe_drv_v4_conn *cn)
+  */
+ bool ppe_drv_tun_attach_mapt_v4_to_v6(struct ppe_drv_v4_conn *cn)
+ {
++#ifdef BE7000_RAM_DIAGNOSTIC
++	/* The RAM diagnostic has no NAT46/MAP-T stack. */
++	return false;
++#else
+ 	uint8_t len_adjust;
+ 	struct iphdr ip4 = {0};
+ 	uint16_t sport, dport;
+@@ -710,6 +716,7 @@ bool ppe_drv_tun_attach_mapt_v4_to_v6(struct ppe_drv_v4_conn *cn)
+ 	}
+ 
+ 	return true;
++#endif
+ }
+ 
+ /*
+@@ -746,6 +753,9 @@ bool ppe_drv_tun_detach_mapt_v6_to_v4(struct ppe_drv_tun *ptun)
+  */
+ bool ppe_drv_tun_attach_mapt_v6_to_v4(struct ppe_drv_v6_conn *conn_tun_v6)
+ {
++#ifdef BE7000_RAM_DIAGNOSTIC
++	return false;
++#else
+ 	uint8_t len_adjust;
+ 	struct ipv6hdr ip6;
+ 	uint16_t sport, dport;
+@@ -858,6 +868,7 @@ bool ppe_drv_tun_attach_mapt_v6_to_v4(struct ppe_drv_v6_conn *conn_tun_v6)
+ 	}
+ 
+ 	return true;
++#endif
+ }
+ 
+ /*

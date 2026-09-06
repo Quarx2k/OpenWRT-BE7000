@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+state=/mnt/usb/BE7000-OpenWrt/boot
+# Never create flags on the RAM filesystem when the USB is absent.
+awk '$2=="/mnt/usb" && $3=="ext4" && $4 ~ /(^|,)rw(,|$)/ {ok=1} END {exit !ok}' /proc/mounts || exit 1
+[ ! -L "$state" ] || exit 1
+mkdir -p "$state"
+case "${1:-status}" in
+status)
+    installed=false; enabled=false; once=false; attempts=0
+    [ ! -f "$state/installed" ] || installed=true
+    if [ "$installed" = true ] && [ ! -f "$state/autostart-disabled" ]; then enabled=true; fi
+    [ ! -f "$state/xiaomi-once" ] || once=true
+    if [ -f "$state/boot-pending" ]; then
+        attempts=$(cat "$state/boot-pending")
+        case "$attempts" in 1|2|3) ;; *) attempts=3;; esac
+    fi
+    printf '{"installed":%s,"enabled":%s,"xiaomi_once":%s,"attempts":%s}\n' "$installed" "$enabled" "$once" "$attempts"
+    ;;
+enable|retry)
+    [ -f "$state/installed" ] || { echo 'Install autostart from Xiaomi first' >&2; exit 1; }
+    rm -f "$state/autostart-disabled" "$state/boot-pending" "$state/xiaomi-once"
+    sync
+    ;;
+disable)
+    touch "$state/autostart-disabled"
+    sync
+    ;;
+xiaomi-once)
+    touch "$state/xiaomi-once"
+    sync
+    ;;
+success)
+    [ -f "$state/boot-pending" ] || exit 0
+    rm "$state/boot-pending"
+    sync
+    logger -t be7000-boot 'OpenWrt boot confirmed; attempt counter cleared'
+    ;;
+*) echo 'Usage: be7000-boot [status|enable|disable|retry|xiaomi-once]' >&2; exit 2;;
+esac

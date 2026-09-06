@@ -1,0 +1,153 @@
+From 469a34b7cf32b0165ca7a9e17e70b28f7194ed3e Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:58 +0600
+Subject: [PATCH 6/8] Support current capabilities and preserve task ABI with
+ seccomp
+
+---
+ include/linux/capability.h          | 15 +++++++++
+ include/linux/sched.h               |  9 ++++++
+ include/uapi/linux/capability.h     | 47 ++++++++++++++++++++++++++++-
+ security/selinux/include/classmap.h |  5 +--
+ 4 files changed, 73 insertions(+), 3 deletions(-)
+
+diff --git a/include/linux/capability.h b/include/linux/capability.h
+index ecce0f43c..1e7fe311c 100644
+--- a/include/linux/capability.h
++++ b/include/linux/capability.h
+@@ -251,6 +251,21 @@ extern bool privileged_wrt_inode_uidgid(struct user_namespace *ns, const struct
+ extern bool capable_wrt_inode_uidgid(const struct inode *inode, int cap);
+ extern bool file_ns_capable(const struct file *file, struct user_namespace *ns, int cap);
+ extern bool ptracer_capable(struct task_struct *tsk, struct user_namespace *ns);
++static inline bool perfmon_capable(void)
++{
++	return capable(CAP_PERFMON) || capable(CAP_SYS_ADMIN);
++}
++
++static inline bool bpf_capable(void)
++{
++	return capable(CAP_BPF) || capable(CAP_SYS_ADMIN);
++}
++
++static inline bool checkpoint_restore_ns_capable(struct user_namespace *ns)
++{
++	return ns_capable(ns, CAP_CHECKPOINT_RESTORE) ||
++		ns_capable(ns, CAP_SYS_ADMIN);
++}
+ 
+ /* audit system wants to get cap info from files as well */
+ extern int get_vfs_caps_from_disk(const struct dentry *dentry, struct cpu_vfs_cap_data *cpu_caps);
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index afee5d5eb..72b299910 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -931,7 +931,9 @@ struct task_struct {
+ 	kuid_t				loginuid;
+ 	unsigned int			sessionid;
+ #endif
++#if !defined(CONFIG_ARM64) || !defined(CONFIG_BE7000_KEXEC_HANDOFF)
+ 	struct seccomp			seccomp;
++#endif
+ 
+ 	/* Thread group tracking: */
+ 	u64				parent_exec_id;
+@@ -1277,6 +1279,13 @@ struct task_struct {
+ 	/* CPU-specific state of this task: */
+ 	struct thread_struct		thread;
+ 
++#if defined(CONFIG_ARM64) && defined(CONFIG_BE7000_KEXEC_HANDOFF)
++	/* Preserve legacy QSDK task offsets when enabling seccomp. ARM64 has
++	 * no variable-sized thread tail; this fits the existing tail padding.
++	 */
++	struct seccomp			seccomp;
++#endif
++
+ 	/*
+ 	 * WARNING: on x86, 'thread_struct' contains a variable-sized
+ 	 * structure.  It *MUST* be at the end of 'task_struct'.
+diff --git a/include/uapi/linux/capability.h b/include/uapi/linux/capability.h
+index 240fdb9a6..1ccc82731 100644
+--- a/include/uapi/linux/capability.h
++++ b/include/uapi/linux/capability.h
+@@ -274,6 +274,7 @@ struct vfs_ns_cap_data {
+    arbitrary SCSI commands */
+ /* Allow setting encryption key on loopback filesystem */
+ /* Allow setting zone reclaim policy */
++/* Allow everything under CAP_BPF and CAP_PERFMON for backward compatibility */
+ 
+ #define CAP_SYS_ADMIN        21
+ 
+@@ -366,8 +367,52 @@ struct vfs_ns_cap_data {
+ 
+ #define CAP_AUDIT_READ		37
+ 
++/*
++ * Allow system performance and observability privileged operations
++ * using perf_events, i915_perf and other kernel subsystems
++ */
++
++#define CAP_PERFMON		38
++
++/*
++ * CAP_BPF allows the following BPF operations:
++ * - Creating all types of BPF maps
++ * - Advanced verifier features
++ *   - Indirect variable access
++ *   - Bounded loops
++ *   - BPF to BPF function calls
++ *   - Scalar precision tracking
++ *   - Larger complexity limits
++ *   - Dead code elimination
++ *   - And potentially other features
++ * - Loading BPF Type Format (BTF) data
++ * - Retrieve xlated and JITed code of BPF programs
++ * - Use bpf_spin_lock() helper
++ *
++ * CAP_PERFMON relaxes the verifier checks further:
++ * - BPF progs can use of pointer-to-integer conversions
++ * - speculation attack hardening measures are bypassed
++ * - bpf_probe_read to read arbitrary kernel memory is allowed
++ * - bpf_trace_printk to print kernel memory is allowed
++ *
++ * CAP_SYS_ADMIN is required to use bpf_probe_write_user.
++ *
++ * CAP_SYS_ADMIN is required to iterate system wide loaded
++ * programs, maps, links, BTFs and convert their IDs to file descriptors.
++ *
++ * CAP_PERFMON and CAP_BPF are required to load tracing programs.
++ * CAP_NET_ADMIN and CAP_BPF are required to load networking programs.
++ */
++#define CAP_BPF			39
++
++
++/* Allow checkpoint/restore related operations */
++/* Allow PID selection during clone3() */
++/* Allow writing to ns_last_pid */
++
++#define CAP_CHECKPOINT_RESTORE	40
+ 
+-#define CAP_LAST_CAP         CAP_AUDIT_READ
++#define CAP_LAST_CAP         CAP_CHECKPOINT_RESTORE
+ 
+ #define cap_valid(x) ((x) >= 0 && (x) <= CAP_LAST_CAP)
+ 
+diff --git a/security/selinux/include/classmap.h b/security/selinux/include/classmap.h
+index 6a95b1fe7..332fe95dc 100644
+--- a/security/selinux/include/classmap.h
++++ b/security/selinux/include/classmap.h
+@@ -27,9 +27,10 @@
+ 	    "audit_control", "setfcap"
+ 
+ #define COMMON_CAP2_PERMS  "mac_override", "mac_admin", "syslog", \
+-		"wake_alarm", "block_suspend", "audit_read"
++		"wake_alarm", "block_suspend", "audit_read", "perfmon", "bpf", \
++		"checkpoint_restore"
+ 
+-#if CAP_LAST_CAP > CAP_AUDIT_READ
++#if CAP_LAST_CAP > CAP_CHECKPOINT_RESTORE
+ #error New capability defined, please update COMMON_CAP2_PERMS.
+ #endif
+ 
+-- 
+2.43.0
+

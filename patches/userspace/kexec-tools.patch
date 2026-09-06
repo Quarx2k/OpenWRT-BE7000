@@ -1,0 +1,75 @@
+--- a/kexec/kexec-syscall.h
++++ b/kexec/kexec-syscall.h
+@@ -2,6 +2,9 @@
+ #define KEXEC_SYSCALL_H
+ 
+ #define __LIBRARY__
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
+ #include <sys/syscall.h>
+ #include <unistd.h>
+ 
+@@ -96,10 +99,50 @@
+ 
+ struct kexec_segment;
+ 
++/*
++ * The BE7000 stock kernel has no usable kexec_load syscall.  The companion
++ * kexec-mod modules expose the same operation through /dev/kexec instead.
++ * Keep this transport compiled into the static userspace loader so it does
++ * not depend on LD_PRELOAD or the router's C library.
++ */
++static inline long kexec_mod_ioctl(unsigned long request, void *arg)
++{
++	int fd;
++	int saved_errno;
++	long result;
++
++	fd = open("/dev/kexec", O_RDONLY);
++	if (fd < 0)
++		return -1;
++
++	result = ioctl(fd, request, arg);
++	saved_errno = errno;
++	close(fd);
++	errno = saved_errno;
++	return result;
++}
++
+ static inline long kexec_load(void *entry, unsigned long nr_segments,
+ 			struct kexec_segment *segments, unsigned long flags)
+ {
+-	return (long) syscall(__NR_kexec_load, entry, nr_segments, segments, flags);
++	struct {
++		unsigned long entry;
++		unsigned long nr_segments;
++		struct kexec_segment *segments;
++		unsigned long flags;
++	} args;
++
++	args.entry = (unsigned long)entry;
++	args.nr_segments = nr_segments;
++	args.segments = segments;
++	args.flags = flags;
++
++	return kexec_mod_ioctl(LINUX_REBOOT_CMD_KEXEC - 1, &args);
++}
++
++static inline long kexec_mod_execute(void)
++{
++	return kexec_mod_ioctl(LINUX_REBOOT_CMD_KEXEC, NULL);
+ }
+ 
+ static inline int is_kexec_file_load_implemented(void) {
+--- a/kexec/kexec.c
++++ b/kexec/kexec.c
+@@ -969,7 +969,7 @@
+ 		if ((kexec_flags & KEXEC_LIVE_UPDATE) && !ret)
+ 			return 0;
+ 	} else
+-		reboot(LINUX_REBOOT_CMD_KEXEC);
++		kexec_mod_execute();
+ 	/* I have failed if I make it here */
+ 	fprintf(stderr, "kexec failed: %s\n", 
+ 		strerror(errno));

@@ -1,0 +1,122 @@
+From a9e42f8f467ce95e5acb203315eceda0486c1381 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 8 Sep 2026 06:23:32 +0600
+Subject: [PATCH] Accept current hostapd EHT attributes and beacon key indexes
+
+Preserve the QSDK EHT and command IDs while accepting their upstream equivalents. Translate control-port TX status for the existing QCA adapter. Allow BIGTK indexes 6 and 7 through the outer policy; the existing beacon capability and key validation still apply.
+---
+ include/uapi/linux/nl80211.h |  5 +++++
+ net/wireless/nl80211.c       | 31 +++++++++++++++++++++++++++----
+ 2 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/include/uapi/linux/nl80211.h b/include/uapi/linux/nl80211.h
+index 79da71355..3bd7adbd8 100644
+--- a/include/uapi/linux/nl80211.h
++++ b/include/uapi/linux/nl80211.h
+@@ -1394,7 +1394,10 @@ enum nl80211_commands {
+ 
+ 	NL80211_CMD_SET_FILS_AAD,
+ 
++	/* Upstream wire IDs; keep the existing QSDK IDs for vendor userspace. */
++	NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS_STANDARD = 139,
+ 	NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS = 140,
++	NL80211_CMD_SET_FILS_AAD_STANDARD = 146,
+ 
+ 	/* add new commands above here */
+ 
+@@ -2992,6 +2995,8 @@ enum nl80211_attrs {
+ 
+ 	NL80211_ATTR_SAE_PWE = 298,
+ 
++	/* Upstream number; keep the QSDK ABI at 350 for vendor userspace. */
++	NL80211_ATTR_EHT_CAPABILITY_STANDARD = 310,
+ 	NL80211_ATTR_EHT_CAPABILITY = 350,
+ 	NL80211_ATTR_EHT_PUNCTURE_BITMAP,
+ 	NL80211_ATTR_MLD_MAC,
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 632fa49a0..0219eb68a 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -372,7 +372,7 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
+ 	[NL80211_ATTR_KEY] = { .type = NLA_NESTED, },
+ 	[NL80211_ATTR_KEY_DATA] = { .type = NLA_BINARY,
+ 				    .len = WLAN_MAX_KEY_LEN },
+-	[NL80211_ATTR_KEY_IDX] = NLA_POLICY_MAX(NLA_U8, 5),
++	[NL80211_ATTR_KEY_IDX] = NLA_POLICY_MAX(NLA_U8, 7),
+ 	[NL80211_ATTR_KEY_CIPHER] = { .type = NLA_U32 },
+ 	[NL80211_ATTR_KEY_DEFAULT] = { .type = NLA_FLAG },
+ 	[NL80211_ATTR_KEY_SEQ] = { .type = NLA_BINARY, .len = 16 },
+@@ -645,6 +645,8 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
+ 						  NL80211_SAE_PWE_BOTH),
+ 	[NL80211_ATTR_EHT_CAPABILITY] = { .type = NLA_BINARY,
+ 					 .len = NL80211_EHT_MAX_CAPABILITY_LEN },
++	[NL80211_ATTR_EHT_CAPABILITY_STANDARD] = { .type = NLA_BINARY,
++					 .len = NL80211_EHT_MAX_CAPABILITY_LEN },
+ 	[NL80211_ATTR_EHT_PUNCTURE_BITMAP] = { .type = NLA_U32 },
+ 	[NL80211_ATTR_CONTROL_PORT_NO_PREAUTH] = { .type = NLA_FLAG },
+ 	[NL80211_ATTR_MLD_MAC] = { .type = NLA_EXACT_LEN_WARN, .len = ETH_ALEN },
+@@ -1219,7 +1221,7 @@ static int nl80211_parse_key(struct genl_info *info, struct key_parse *k)
+ 			}
+ 		} else {
+ 			if (k->idx < 0 || k->idx > 7) {
+-				GENL_SET_ERR_MSG(info, "key idx not 0-5");
++				GENL_SET_ERR_MSG(info, "key idx not 0-7");
+ 				return -EINVAL;
+ 			}
+ 		}
+@@ -5841,6 +5843,11 @@ static int nl80211_set_station_tdls(struct genl_info *info,
+ 			return -EINVAL;
+ 	}
+ 
++	/* Modern hostapd sends the upstream EHT attribute number. */
++	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD])
++		info->attrs[NL80211_ATTR_EHT_CAPABILITY] =
++			info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD];
++
+ 	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY]) {
+ 		params->eht_capa =
+ 			nla_data(info->attrs[NL80211_ATTR_EHT_CAPABILITY]);
+@@ -6106,6 +6113,11 @@ static int nl80211_new_station(struct sk_buff *skb, struct genl_info *info)
+ 			return -EINVAL;
+ 	}
+ 
++	/* Modern hostapd sends the upstream EHT attribute number. */
++	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD])
++		info->attrs[NL80211_ATTR_EHT_CAPABILITY] =
++			info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD];
++
+ 	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY]) {
+ 		params.eht_capa =
+ 			nla_data(info->attrs[NL80211_ATTR_EHT_CAPABILITY]);
+@@ -14999,6 +15011,13 @@ static const struct genl_ops nl80211_ops[] = {
+ 		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
+ 				  NL80211_FLAG_NEED_RTNL,
+ 	},
++	{
++		.cmd = NL80211_CMD_SET_FILS_AAD_STANDARD,
++		.doit = nl80211_set_fils_aad,
++		.flags = GENL_ADMIN_PERM,
++		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
++				  NL80211_FLAG_NEED_RTNL,
++	},
+ };
+ 
+ static struct genl_family nl80211_fam __ro_after_init = {
+@@ -16159,8 +16178,12 @@ void cfg80211_control_port_tx_status(struct wireless_dev *wdev, u64 cookie,
+ 				     const u8 *buf, size_t len, bool ack,
+ 				     gfp_t gfp)
+ {
+-	nl80211_frame_tx_status(wdev, cookie, buf, len, ack, gfp,
+-				NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS);
++	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
++	enum nl80211_commands cmd = NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS;
++
++	if (qcom_he_compat_active(rdev))
++		cmd = NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS_STANDARD;
++	nl80211_frame_tx_status(wdev, cookie, buf, len, ack, gfp, cmd);
+ }
+ EXPORT_SYMBOL(cfg80211_control_port_tx_status);
+ 
+-- 
+2.43.0
+

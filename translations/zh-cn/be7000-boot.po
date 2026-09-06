@@ -1,0 +1,43 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh-cn\n"
+
+msgid "Boot system"
+msgstr "系统启动"
+
+msgid "Could not update boot settings."
+msgstr "无法更新启动设置。"
+
+msgid "Without the USB drive, the router starts Xiaomi firmware. Three unconfirmed OpenWrt boots pause automatic startup."
+msgstr "未连接 USB 存储设备时，路由器将启动小米固件。连续三次 OpenWrt 启动未获确认后，自动启动将暂停。"
+
+msgid "Autostart is not installed. Run the installer in Xiaomi firmware and select automatic startup."
+msgstr "尚未安装自动启动功能。请在小米固件下运行安装程序，并选择自动启动。"
+
+msgid "OpenWrt autostart: %s"
+msgstr "OpenWrt 自动启动：%s"
+
+msgid "Unconfirmed attempts: %d / 3"
+msgstr "未确认的启动次数：%d / 3"
+
+msgid "The next boot will stay in Xiaomi firmware."
+msgstr "下次启动时将保留在小米固件中。"
+
+msgid "Disable autostart"
+msgstr "禁用自动启动"
+
+msgid "Enable autostart"
+msgstr "启用自动启动"
+
+msgid "Reset attempts and enable"
+msgstr "重置尝试次数并启用"
+
+msgid "Reboot into Xiaomi"
+msgstr "重启至小米固件"
+
+msgid "The USB drive can stay connected. OpenWrt autostart will be skipped once."
+msgstr "无需拔出 USB 存储设备。本次重启将跳过 OpenWrt 自动启动。"
+
+msgid "Reconnect to Xiaomi firmware at its configured LAN address."
+msgstr "请使用小米固件中配置的 LAN 地址重新连接。"

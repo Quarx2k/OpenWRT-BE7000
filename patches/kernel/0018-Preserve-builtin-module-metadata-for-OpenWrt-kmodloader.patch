@@ -1,0 +1,32 @@
+From 03053fc315a77d22862c53de9bf33db6f7f2aa35 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Wed, 9 Sep 2026 00:24:03 +0600
+Subject: [PATCH] Preserve builtin module metadata for OpenWrt kmodloader
+
+Restore .modinfo generation for builtin components so modules.builtin.modinfo contains their aliases and parameters. QSDK had suppressed it even though the build already exports the file. The section remains excluded from the running kernel and loadable module metadata is unchanged.
+---
+ include/linux/moduleparam.h | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/include/linux/moduleparam.h b/include/linux/moduleparam.h
+index 17095effd..a1af6b567 100644
+--- a/include/linux/moduleparam.h
++++ b/include/linux/moduleparam.h
+@@ -30,14 +30,10 @@
+ #define __MODULE_INFO_STRIP(tag, name, info) __MODULE_INFO(tag, name, info)
+ #endif
+ 
+-#ifdef MODULE
+ #define __MODULE_INFO(tag, name, info)					  \
+ static const char __UNIQUE_ID(name)[]					  \
+   __used __attribute__((section(".modinfo"), unused, aligned(1)))	  \
+   = __MODULE_INFO_PREFIX __stringify(tag) "=" info
+-#else
+-#define __MODULE_INFO(tag, name, info) __MODULE_INFO_DISABLED(name)
+-#endif
+ 
+ #define __MODULE_PARM_TYPE(name, _type)					  \
+   __MODULE_INFO(parmtype, name##type, #name ":" _type)
+-- 
+2.43.0
+

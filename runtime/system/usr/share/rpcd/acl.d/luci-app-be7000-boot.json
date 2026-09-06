@@ -1,0 +1,18 @@
+{
+    "luci-app-be7000-boot": {
+        "description": "Manage BE7000 USB boot",
+        "read": {
+            "ubus": { "file": [ "exec" ] },
+            "file": { "/usr/sbin/be7000-boot status": [ "exec" ] }
+        },
+        "write": {
+            "ubus": { "file": [ "exec" ], "system": [ "reboot" ] },
+            "file": {
+                "/usr/sbin/be7000-boot enable": [ "exec" ],
+                "/usr/sbin/be7000-boot disable": [ "exec" ],
+                "/usr/sbin/be7000-boot retry": [ "exec" ],
+                "/usr/sbin/be7000-boot xiaomi-once": [ "exec" ]
+            }
+        }
+    }
+}

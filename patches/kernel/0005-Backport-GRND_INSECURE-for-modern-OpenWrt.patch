@@ -1,0 +1,57 @@
+From fdbec28158647191b7ea393b10ad355f9eae28d6 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:58 +0600
+Subject: [PATCH 5/8] Backport GRND_INSECURE for modern OpenWrt
+
+---
+ drivers/char/random.c       | 11 +++++++++--
+ include/uapi/linux/random.h |  2 ++
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/char/random.c b/drivers/char/random.c
+index ffd61aadb..e77c6a307 100644
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -2184,7 +2184,14 @@ SYSCALL_DEFINE3(getrandom, char __user *, buf, size_t, count,
+ {
+ 	int ret;
+ 
+-	if (flags & ~(GRND_NONBLOCK|GRND_RANDOM))
++	if (flags & ~(GRND_NONBLOCK|GRND_RANDOM|GRND_INSECURE))
++		return -EINVAL;
++
++	/*
++	 * Requesting insecure and blocking randomness at the same time makes
++	 * no sense.
++	 */
++	if ((flags & (GRND_INSECURE|GRND_RANDOM)) == (GRND_INSECURE|GRND_RANDOM))
+ 		return -EINVAL;
+ 
+ 	if (count > INT_MAX)
+@@ -2193,7 +2200,7 @@ SYSCALL_DEFINE3(getrandom, char __user *, buf, size_t, count,
+ 	if (flags & GRND_RANDOM)
+ 		return _random_read(flags & GRND_NONBLOCK, buf, count);
+ 
+-	if (!crng_ready()) {
++	if (!(flags & GRND_INSECURE) && !crng_ready()) {
+ 		if (flags & GRND_NONBLOCK)
+ 			return -EAGAIN;
+ 		ret = wait_for_random_bytes();
+diff --git a/include/uapi/linux/random.h b/include/uapi/linux/random.h
+index 26ee91300..c092d2008 100644
+--- a/include/uapi/linux/random.h
++++ b/include/uapi/linux/random.h
+@@ -49,8 +49,10 @@ struct rand_pool_info {
+  *
+  * GRND_NONBLOCK	Don't block and return EAGAIN instead
+  * GRND_RANDOM		Use the /dev/random pool instead of /dev/urandom
++ * GRND_INSECURE	Return non-cryptographic random bytes
+  */
+ #define GRND_NONBLOCK	0x0001
+ #define GRND_RANDOM	0x0002
++#define GRND_INSECURE	0x0004
+ 
+ #endif /* _UAPI_LINUX_RANDOM_H */
+-- 
+2.43.0
+

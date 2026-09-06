@@ -1,0 +1,44 @@
+From f1b04ee4234362a26c9f70cb72ff09c3ae0c0ca8 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Mon, 7 Sep 2026 02:23:58 +0600
+Subject: [PATCH 4/8] Fix QSDK out-of-tree LZMA build and RAM root support
+
+---
+ init/do_mounts.c  | 3 +++
+ lib/lzma/Makefile | 2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/init/do_mounts.c b/init/do_mounts.c
+index 1cb0a9571..6c7142830 100644
+--- a/init/do_mounts.c
++++ b/init/do_mounts.c
+@@ -461,6 +461,7 @@ void __init mount_block_root(char *name, int flags)
+ 	put_page(page);
+ }
+ 
++#ifdef CONFIG_MTD_ROOTFS_ROOT_DEV
+ static int __init mount_ubi_rootfs(void)
+ {
+ 	int flags = MS_SILENT;
+@@ -482,6 +483,8 @@ static int __init mount_ubi_rootfs(void)
+ 	return -EINVAL;
+ }
+ 
++#endif /* CONFIG_MTD_ROOTFS_ROOT_DEV */
++
+ #ifdef CONFIG_ROOT_NFS
+ 
+ #define NFSROOT_TIMEOUT_MIN	5
+diff --git a/lib/lzma/Makefile b/lib/lzma/Makefile
+index 02e799c99..d521f6743 100644
+--- a/lib/lzma/Makefile
++++ b/lib/lzma/Makefile
+@@ -4,4 +4,4 @@ lzma_decompress-objs := LzmaDec.o
+ obj-$(CONFIG_LZMA_COMPRESS) += lzma_compress.o
+ obj-$(CONFIG_LZMA_DECOMPRESS) += lzma_decompress.o
+ 
+-EXTRA_CFLAGS += -Iinclude/linux -Iinclude/linux/lzma -include types.h
++EXTRA_CFLAGS += -I$(srctree)/include/linux -I$(srctree)/include/linux/lzma -include types.h
+-- 
+2.43.0
+

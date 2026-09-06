@@ -1,0 +1,46 @@
+From 80363485c7802663df1cbfc30128cd6e6bbcb897 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 8 Sep 2026 06:23:32 +0600
+Subject: [PATCH] Keep QSDK WLAN bridge traffic untagged by default
+
+The vendor VLAN filter callback assigns a single RX VLAN. Adding a VAP to an ordinary bridge therefore tags DHCP with the default VID 1 and prevents local IP delivery. Clear the incorrect hardware filter capabilities at registration, preserving RX/TX tag offload and software bridge VLAN filtering.
+---
+ net/wireless/core.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index 2eb05f562..ac2dcba8b 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -12,6 +12,7 @@
+ 
+ #include <linux/if.h>
+ #include <linux/module.h>
++#include <linux/if_arp.h>
+ #include <linux/err.h>
+ #include <linux/list.h>
+ #include <linux/slab.h>
+@@ -1298,6 +1299,20 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
+ 		/* can only change netns with wiphy */
+ 		dev->features |= NETIF_F_NETNS_LOCAL;
+ 
++		if (qcom_he_compat_active(rdev) && dev->type == ARPHRD_ETHER) {
++			netdev_features_t filter = NETIF_F_HW_VLAN_CTAG_FILTER |
++						   NETIF_F_HW_VLAN_STAG_FILTER;
++
++			/* QSDK's VLAN callbacks select a single RX VLAN instead of
++			 * filtering tags. The bridge's default VID 1 would therefore
++			 * tag ordinary WLAN traffic even with vlan_filtering off.
++			 * Keep RX/TX tag offload, but let the bridge filter VLANs.
++			 */
++			dev->features &= ~filter;
++			dev->hw_features &= ~filter;
++			dev->wanted_features &= ~filter;
++		}
++
+ 		cfg80211_init_wdev(wdev);
+ 		break;
+ 	case NETDEV_REGISTER:
+-- 
+2.43.0
+

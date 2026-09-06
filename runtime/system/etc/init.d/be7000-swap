@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+START=20
+STOP=90
+
+start() {
+    local image=/mnt/usb/BE7000-OpenWrt/swap.img
+    [ -s "$image" ] || return 0
+    grep -q "^$image " /proc/swaps && return 0
+    swapon "$image" || { logger -t be7000-swap 'Could not enable USB swap'; return 1; }
+    logger -t be7000-swap 'USB swap enabled'
+}
+
+stop() {
+    local image=/mnt/usb/BE7000-OpenWrt/swap.img
+    grep -q "^$image " /proc/swaps || return 0
+    swapoff "$image"
+}

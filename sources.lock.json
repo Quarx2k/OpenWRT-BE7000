@@ -1,0 +1,82 @@
+{
+  "openwrt": {
+    "url": "https://github.com/openwrt/openwrt.git",
+    "revision": "f0a60eee2fe051741c643ea6118718aae1ef17fb",
+    "tag": "v25.12.5"
+  },
+  "ssdk": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-ssdk.git",
+    "revision": "558232b6b80ec918497b5dfbdb6c7f5b92a07ab6",
+    "patch": "patches/components/ssdk.patch"
+  },
+  "ppe": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-ppe.git",
+    "revision": "c55f6bcd609b1e05d84269ab06e631215ff9338e",
+    "patch": "patches/components/ppe.patch"
+  },
+  "dp": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-dp.git",
+    "revision": "dd72d787d198511f9cbeac250a83534d9d620844"
+  },
+  "nat46": {
+    "url": "https://github.com/ayourtch/nat46.git",
+    "revision": "1182f30785e4274913f01a8c3d7e1b5437ae3819",
+    "patch": "patches/components/nat46.patch"
+  },
+  "amneziawg": {
+    "url": "https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git",
+    "revision": "ae0924ca700520ca34c5bdbcfd05b2f683ea9353",
+    "patch": "patches/components/amneziawg.patch"
+  },
+  "busybox": {
+    "url": "https://busybox.net/downloads/busybox-1.37.0.tar.bz2",
+    "version": "1.37.0",
+    "config": "configs/rescue-busybox.config"
+  },
+  "kexec-tools": {
+    "url": "https://mirrors.edge.kernel.org/pub/linux/utils/kernel/kexec/kexec-tools-2.0.32.tar.xz",
+    "version": "2.0.32",
+    "patch": "patches/userspace/kexec-tools.patch"
+  },
+  "amneziawg-tools": {
+    "url": "https://github.com/amnezia-vpn/amneziawg-tools.git",
+    "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a"
+  },
+  "wireguard": {
+    "url": "https://git.zx2c4.com/wireguard-linux-compat",
+    "revision": "18fbcd68a35a892527345dc5679d0b2d860ee004",
+    "tag": "v1.0.20220627"
+  },
+  "emesh-sp": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/emesh-sp.git",
+    "revision": "0aca76f5e9261f3361f3a72639c55f0038fc35e7"
+  },
+  "nss-drv": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-drv.git",
+    "revision": "cabaac4744d1c65ab4ca0f4da66c086a97f20d7f"
+  },
+  "nss-eip": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-eip.git",
+    "revision": "6427c3bc836dfc19f1a91bf25f0dc5a6e0f7b383"
+  },
+  "nss-nsm": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-nsm.git",
+    "revision": "bbef4419bb6fd8e0402ff0aea97712482df0b730"
+  },
+  "nss-speedtest": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-speedtest.git",
+    "revision": "7924a20b1f0a3f3486728d04fa6bcbe9ebe5ea46"
+  },
+  "qca-nss-ecm": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-nss-ecm.git",
+    "revision": "a1aecbeecba64c61a8540be4c4d865378368fa62"
+  },
+  "qca-ovsmgr": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-ovsmgr.git",
+    "revision": "513336e9812e9028b9f0d72aab22fbeac974e48e"
+  },
+  "shortcut-fe": {
+    "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/shortcut-fe.git",
+    "revision": "0d18bb6ce9dc1decb3c57985715feab3b4d30589"
+  }
+}

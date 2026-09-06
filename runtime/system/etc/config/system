@@ -1,0 +1,37 @@
+config system
+	option hostname 'BE7000-OpenWrt'
+	option timezone 'UTC'
+	option ttylogin '1'
+	option log_size '256'
+	option urandom_seed '0'
+	option conloglevel '7'
+
+config led 'led_sys_white'
+	option name 'System (white)'
+	option sysfs 'sys_white'
+	option trigger 'none'
+	option default '1'
+
+config led 'led_sys_orange'
+	option name 'System (orange)'
+	option sysfs 'sys_orange'
+	option trigger 'none'
+	option default '0'
+
+config led 'led_net_white'
+	option name 'Network (white)'
+	option sysfs 'net_white'
+	option trigger 'none'
+	option default '0'
+
+config led 'led_net_orange'
+	option name 'Network (orange)'
+	option sysfs 'net_orange'
+	option trigger 'none'
+	option default '0'
+
+config led 'led_iot_white'
+	option name 'IoT / antenna (white)'
+	option sysfs 'iot_white'
+	option trigger 'none'
+	option default '0'

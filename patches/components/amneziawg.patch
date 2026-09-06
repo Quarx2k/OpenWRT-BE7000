@@ -1,0 +1,40 @@
+diff --git a/src/crypto/zinc/selftest/blake2s.c b/src/crypto/zinc/selftest/blake2s.c
+index 1b5c210..4c689a0 100644
+--- a/src/crypto/zinc/selftest/blake2s.c
++++ b/src/crypto/zinc/selftest/blake2s.c
+@@ -2072,7 +2072,7 @@ static bool __init blake2s_selftest(void)
+ 		buf[i] = (u8)i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(blake2s_keyed_testvecs); ++i) {
+-		blake2s(hash, buf, key, BLAKE2S_HASH_SIZE, i, BLAKE2S_KEY_SIZE);
++		blake2s(key, BLAKE2S_KEY_SIZE, buf, i, hash, BLAKE2S_HASH_SIZE);
+ 		if (memcmp(hash, blake2s_keyed_testvecs[i], BLAKE2S_HASH_SIZE)) {
+ 			pr_err("blake2s keyed self-test %zu: FAIL\n", i + 1);
+ 			success = false;
+@@ -2080,7 +2080,7 @@ static bool __init blake2s_selftest(void)
+ 	}
+ 
+ 	for (i = 0; i < ARRAY_SIZE(blake2s_testvecs); ++i) {
+-		blake2s(hash, buf, NULL, BLAKE2S_HASH_SIZE, i, 0);
++		blake2s(NULL, 0, buf, i, hash, BLAKE2S_HASH_SIZE);
+ 		if (memcmp(hash, blake2s_testvecs[i], BLAKE2S_HASH_SIZE)) {
+ 			pr_err("blake2s unkeyed self-test %zu: FAIL\n", i + i);
+ 			success = false;
+diff --git a/src/socket.c b/src/socket.c
+index b4d38b1..996fcdc 100644
+--- a/src/socket.c
++++ b/src/socket.c
+@@ -81,6 +81,13 @@ static int send4(struct wg_device *wg, struct sk_buff *skb,
+ 			dst_cache_set_ip4(cache, &rt->dst, fl.saddr);
+ 	}
+ 
++	/*
++	 * Xiaomi/QSDK's iptunnel_xmit() dereferences netif_is_vxlan(in_dev)
++	 * even when a zero skb_iif made in_dev NULL. It scrubs this temporary
++	 * value before the outer UDP packet enters the IP stack.
++	 */
++	skb->skb_iif = LOOPBACK_IFINDEX;
++
+ 	skb->ignore_df = 1;
+ 	udp_tunnel_xmit_skb(rt, sock, skb, fl.saddr, fl.daddr, ds,
+ 			    ip4_dst_hoplimit(&rt->dst), 0, fl.fl4_sport,

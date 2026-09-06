@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+START=17
+
+start() {
+    case " $(cat /proc/cmdline) " in
+        *" be7000_source=owrt12 "*) ;;
+        *) return 0 ;;
+    esac
+    [ "$(cat /sys/devices/system/cpu/online)" = "0-3" ] && return 0
+    sh /usr/lib/be7000/cpus/05-online-cpus.sh ONLINE-SOURCE-CPUS > /tmp/be7000-cpus.log 2>&1
+    local result=$?
+    logger -t be7000-cpus "online=$(cat /sys/devices/system/cpu/online) result=$result"
+    if [ -r /tmp/owrt12-logdir ]; then
+        local logdir=$(cat /tmp/owrt12-logdir)
+        [ ! -d "$logdir" ] || cp /tmp/be7000-cpus.log "$logdir/cpu-online.log"
+    fi
+    return "$result"
+}

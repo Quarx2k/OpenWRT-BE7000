@@ -1,0 +1,89 @@
+From 0431e6c64b68f79b679a806365a20e23aa19f053 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 8 Sep 2026 22:46:44 +0600
+Subject: [PATCH] bridge: support QSDK netfilter as a loadable module
+
+QSDK calls its netfilter hook gate directly from the bridge core, which
+prevents linking a built-in bridge with modular br_netfilter. Keep the
+gate in the core and dispatch through the existing RCU operation table.
+Preserve other bridge-family hooks when the module is absent, and wait
+for readers before freeing the module state.
+
+Validated Image and module builds with CONFIG_BRIDGE_NETFILTER=m;
+public networking structure layouts match the preceding kernel build.
+---
+ net/bridge/br_netfilter_hooks.c |  4 +++-
+ net/bridge/br_nf_core.c         | 15 +++++++++++++++
+ net/bridge/br_private.h         |  1 +
+ 3 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/net/bridge/br_netfilter_hooks.c b/net/bridge/br_netfilter_hooks.c
+index fb360dab3..5eaa27c26 100644
+--- a/net/bridge/br_netfilter_hooks.c
++++ b/net/bridge/br_netfilter_hooks.c
+@@ -74,7 +74,7 @@ struct brnf_net {
+ #define IS_ARP(skb) \
+ 	(!skb_vlan_tag_present(skb) && skb->protocol == htons(ETH_P_ARP))
+ 
+-bool br_netfilter_run_hooks(struct net *net)
++static bool br_nf_run_hooks(struct net *net)
+ {
+ 	struct brnf_net *brnf = net_generic(net, brnf_net_id);
+ 
+@@ -927,6 +927,7 @@ static int br_nf_dev_xmit(struct sk_buff *skb)
+ 
+ static const struct nf_br_ops br_ops = {
+ 	.br_dev_xmit_hook =	br_nf_dev_xmit,
++	.br_run_hooks =		br_nf_run_hooks,
+ };
+ 
+ /* For br_nf_post_routing, we need (prio = NF_BR_PRI_LAST), because
+@@ -1211,6 +1212,7 @@ static int __init br_netfilter_init(void)
+ static void __exit br_netfilter_fini(void)
+ {
+ 	RCU_INIT_POINTER(nf_br_ops, NULL);
++	synchronize_net();
+ 	unregister_netdevice_notifier(&brnf_notifier);
+ 	unregister_pernet_subsys(&brnf_net_ops);
+ }
+diff --git a/net/bridge/br_nf_core.c b/net/bridge/br_nf_core.c
+index 8c69f0c95..8927d41a0 100644
+--- a/net/bridge/br_nf_core.c
++++ b/net/bridge/br_nf_core.c
+@@ -80,6 +80,21 @@ void br_netfilter_rtable_init(struct net_bridge *br)
+ 	rt->dst.ops = &fake_dst_ops;
+ }
+ 
++bool br_netfilter_run_hooks(struct net *net)
++{
++	const struct nf_br_ops *ops;
++	bool run_hooks = true;
++
++	/* Bridge-family hooks may remain installed without br_netfilter. */
++	rcu_read_lock();
++	ops = rcu_dereference(nf_br_ops);
++	if (ops)
++		run_hooks = ops->br_run_hooks(net);
++	rcu_read_unlock();
++
++	return run_hooks;
++}
++
+ int __init br_nf_core_init(void)
+ {
+ 	return dst_entries_init(&fake_dst_ops);
+diff --git a/net/bridge/br_private.h b/net/bridge/br_private.h
+index 5bfc46b5d..7bd21f572 100644
+--- a/net/bridge/br_private.h
++++ b/net/bridge/br_private.h
+@@ -1112,6 +1112,7 @@ static inline int br_vlan_bridge_event(struct net_device *dev,
+ 
+ struct nf_br_ops {
+ 	int (*br_dev_xmit_hook)(struct sk_buff *skb);
++	bool (*br_run_hooks)(struct net *net);
+ };
+ extern const struct nf_br_ops __rcu *nf_br_ops;
+ 
+-- 
+2.43.0
+

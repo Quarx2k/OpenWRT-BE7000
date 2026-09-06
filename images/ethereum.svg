@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Ethereum">
+  <circle cx="16" cy="16" r="16" fill="#627eea"/>
+  <path d="M16 4v17l8-5z" fill="#fff" fill-opacity=".65"/>
+  <path d="M16 4 8 16l8 5z" fill="#fff"/>
+  <path d="m16 23 8-5-8 10z" fill="#fff" fill-opacity=".65"/>
+  <path d="m16 23-8-5 8 10z" fill="#fff"/>
+</svg>

@@ -1,0 +1,10 @@
+#!/bin/sh /etc/rc.common
+START=18
+boot() {
+    grep -q 'be7000_source=owrt12' /proc/cmdline || return 1
+    [ -s /etc/board.json ] || /bin/board_detect || return 1
+    sh /opt/be7000/nft/load.sh || return 1
+    sh /opt/be7000/wlan-load.sh || return 1
+    ip link set wifi1 address "$(uci get wireless.default_radio1.macaddr)"
+
+}

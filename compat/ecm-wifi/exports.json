@@ -1,0 +1,6 @@
+{
+  "qca_mesh_latency_update_peer_parameter": "umac",
+  "qca_mscs_peer_lookup_n_get_priority": "umac",
+  "qca_scs_peer_lookup_n_rule_match": "umac",
+  "qca_sawf_get_msduq": "wifi_3_0"
+}
