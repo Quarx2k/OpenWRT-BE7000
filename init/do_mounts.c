@@ -461,6 +461,7 @@ out:
 	put_page(page);
 }
 
+#ifdef CONFIG_MTD_ROOTFS_ROOT_DEV
 static int __init mount_ubi_rootfs(void)
 {
 	int flags = MS_SILENT;
@@ -481,6 +482,8 @@ static int __init mount_ubi_rootfs(void)
 
 	return -EINVAL;
 }
+
+#endif /* CONFIG_MTD_ROOTFS_ROOT_DEV */
 
 #ifdef CONFIG_ROOT_NFS
 
