@@ -320,6 +320,7 @@ void __init setup_arch(char **cmdline_p)
 	efi_init();
 	arm64_memblock_init();
 
+	be7000_printk_init();
 	paging_init();
 
 	acpi_table_upgrade();

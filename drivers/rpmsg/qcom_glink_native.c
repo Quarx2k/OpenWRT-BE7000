@@ -22,6 +22,7 @@
 
 #include "rpmsg_internal.h"
 #include "qcom_glink_native.h"
+#include "qcom_glink_be7000.h"
 
 #define GLINK_NAME_SIZE		32
 #define GLINK_VERSION_1		1
@@ -125,6 +126,7 @@ struct qcom_glink {
 	bool intentless;
 
 	atomic_t id_advance;
+	struct be7000_rpm_handoff *handoff;
 };
 
 enum {
@@ -1267,11 +1269,46 @@ release_channel:
 	return ERR_PTR(-ETIMEDOUT);
 }
 
+/* Recreate the retained channel's AP ID and reference, without wire OPENs. */
+static int be7000_glink_adopt(struct qcom_glink *glink,
+			     struct glink_channel *channel)
+{
+	struct be7000_rpm_handoff *h = glink->handoff;
+	unsigned long flags;
+	int ret;
+
+	if (channel->rcid != h->record.rcid)
+		return -EINVAL;
+	if (h->record.state == BE7000_RGLH_ADOPTED)
+		return channel->lcid == h->record.lcid ? 0 : -EINVAL;
+	if (h->record.state != BE7000_RGLH_INJECTED || channel->lcid)
+		return -EINVAL;
+
+	spin_lock_irqsave(&glink->idr_lock, flags);
+	ret = idr_alloc(&glink->lcids, channel, h->record.lcid,
+			h->record.lcid + 1, GFP_ATOMIC);
+	if (ret >= 0) {
+		channel->lcid = ret;
+		kref_get(&channel->refcount);
+	}
+	spin_unlock_irqrestore(&glink->idr_lock, flags);
+	if (ret < 0)
+		return ret;
+	complete_all(&channel->open_ack);
+	be7000_rpm_set_state(h, BE7000_RGLH_ADOPTED);
+	dev_info(glink->dev, "RGLH ADOPTED: lcid=%u rcid=%u\n",
+		 channel->lcid, channel->rcid);
+	return 0;
+}
+
 /* Remote initiated rpmsg_create_ept */
 static int qcom_glink_create_remote(struct qcom_glink *glink,
 				    struct glink_channel *channel)
 {
 	int ret;
+
+	if (glink->handoff && !strcmp(channel->name, BE7000_RGLH_NAME))
+		return be7000_glink_adopt(glink, channel);
 
 	qcom_glink_send_open_ack(glink, channel);
 
@@ -1769,11 +1806,34 @@ static void qcom_glink_cancel_rx_work(struct qcom_glink *glink)
 		kfree(dcmd);
 }
 
-struct qcom_glink *qcom_glink_native_probe(struct device *dev,
+/* Same asynchronous OPEN path as v62, using this kernel's own rx_wq. */
+static int be7000_glink_start(struct qcom_glink *glink)
+{
+	struct glink_defer_cmd *dcmd;
+	unsigned long flags;
+
+	dcmd = kzalloc(sizeof(*dcmd) + sizeof(BE7000_RGLH_NAME), GFP_KERNEL);
+	if (!dcmd)
+		return -ENOMEM;
+	dcmd->msg.cmd = cpu_to_le16(RPM_CMD_OPEN);
+	dcmd->msg.param1 = cpu_to_le16(glink->handoff->record.rcid);
+	dcmd->msg.param2 = cpu_to_le32(sizeof(BE7000_RGLH_NAME));
+	memcpy(dcmd->data, BE7000_RGLH_NAME, sizeof(BE7000_RGLH_NAME));
+	spin_lock_irqsave(&glink->rx_lock, flags);
+	list_add_tail(&dcmd->node, &glink->rx_queue);
+	be7000_rpm_set_state(glink->handoff, BE7000_RGLH_INJECTED);
+	spin_unlock_irqrestore(&glink->rx_lock, flags);
+	dev_info(glink->dev, "RGLH INJECTED: queued retained rpm_requests OPEN\n");
+	queue_work(glink->rx_wq, &glink->rx_work);
+	return 0;
+}
+
+static struct qcom_glink *qcom_glink_native_probe_common(struct device *dev,
 					   unsigned long features,
 					   struct qcom_glink_pipe *rx,
 					   struct qcom_glink_pipe *tx,
-					   bool intentless)
+					   bool intentless,
+					   struct be7000_rpm_handoff *handoff)
 {
 	int irq;
 	int ret;
@@ -1790,6 +1850,7 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 
 	glink->features = features;
 	glink->intentless = intentless;
+	glink->handoff = handoff;
 
 	spin_lock_init(&glink->tx_lock);
 	spin_lock_init(&glink->rx_lock);
@@ -1835,13 +1896,33 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 
 	glink->irq = irq;
 
-	ret = qcom_glink_send_version(glink);
+	ret = handoff ? be7000_glink_start(glink) : qcom_glink_send_version(glink);
 	if (ret)
 		return ERR_PTR(ret);
 
 	return glink;
 }
+
+struct qcom_glink *qcom_glink_native_probe(struct device *dev,
+					 unsigned long features,
+					 struct qcom_glink_pipe *rx,
+					 struct qcom_glink_pipe *tx,
+					 bool intentless)
+{
+	return qcom_glink_native_probe_common(dev, features, rx, tx,
+					    intentless, NULL);
+}
 EXPORT_SYMBOL_GPL(qcom_glink_native_probe);
+
+struct qcom_glink *qcom_glink_native_probe_handoff(struct device *dev,
+					struct qcom_glink_pipe *rx,
+					struct qcom_glink_pipe *tx,
+					struct be7000_rpm_handoff *handoff)
+{
+	return qcom_glink_native_probe_common(dev, handoff->record.features,
+					    rx, tx, true, handoff);
+}
+EXPORT_SYMBOL_GPL(qcom_glink_native_probe_handoff);
 
 static int qcom_glink_remove_device(struct device *dev, void *data)
 {

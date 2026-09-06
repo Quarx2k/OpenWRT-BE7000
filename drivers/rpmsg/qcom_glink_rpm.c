@@ -20,6 +20,7 @@
 
 #include "rpmsg_internal.h"
 #include "qcom_glink_native.h"
+#include "qcom_glink_be7000.h"
 
 #define RPM_TOC_SIZE		256
 #define RPM_TOC_MAGIC		0x67727430 /* grt0 */
@@ -254,9 +255,90 @@ err_inval:
 	return -EINVAL;
 }
 
+#ifdef CONFIG_BE7000_KEXEC_HANDOFF
+static bool be7000_handoff_enabled;
+
+static int __init be7000_handoff_setup(char *str)
+{
+	return kstrtobool(str, &be7000_handoff_enabled);
+}
+early_param("be7000_handoff", be7000_handoff_setup);
+
+static bool be7000_rpm_reserved(void)
+{
+	struct device_node *parent, *node;
+	struct resource res;
+	bool found = false;
+
+	if (!of_machine_is_compatible("qcom,ipq9574"))
+		return false;
+	parent = of_find_node_by_path("/reserved-memory");
+	if (!parent)
+		return false;
+	for_each_available_child_of_node(parent, node) {
+		if (of_property_read_bool(node, "no-map") &&
+		    !of_address_to_resource(node, 0, &res) &&
+		    res.start == 0x4fb00000 && resource_size(&res) == 0x40000) {
+			found = true;
+			of_node_put(node);
+			break;
+		}
+	}
+	of_node_put(parent);
+	return found;
+}
+
+static struct be7000_rpm_handoff *
+be7000_rpm_prepare(struct device *dev, struct glink_rpm_pipe *rx,
+		   struct glink_rpm_pipe *tx)
+{
+	struct be7000_rpm_handoff *h;
+
+	if (!be7000_handoff_enabled)
+		return NULL;
+	if (!be7000_rpm_reserved()) {
+		dev_err(dev, "RGLH: missing rsvd2 no-map reservation\n");
+		return ERR_PTR(-EINVAL);
+	}
+	h = devm_kzalloc(dev, sizeof(*h), GFP_KERNEL);
+	if (!h)
+		return ERR_PTR(-ENOMEM);
+	h->base = devm_ioremap(dev, BE7000_RGLH_PHYS, sizeof(h->record));
+	if (!h->base)
+		return ERR_PTR(-ENOMEM);
+	memcpy_fromio(&h->record, h->base, sizeof(h->record));
+	if (!be7000_rpm_record_valid(&h->record) ||
+	    h->record.tx_len != tx->native.length ||
+	    h->record.rx_len != rx->native.length) {
+		dev_err(dev, "RGLH: invalid record; refusing cold FIFO reset\n");
+		return ERR_PTR(-EINVAL);
+	}
+	/* Only the RPM-owned cursors may have changed since publication. */
+	if (readl(tx->tail) != h->record.tx_tail ||
+	    readl(rx->head) != h->record.rx_head) {
+		dev_err(dev, "RGLH: RPM cursors moved after old-kernel snapshot\n");
+		return ERR_PTR(-EBUSY);
+	}
+	writel(h->record.tx_head, tx->head);
+	writel(h->record.rx_tail, rx->tail);
+	dev_info(dev, "RGLH READY: lcid=%u rcid=%u tx=%#x rx=%#x\n",
+		 h->record.lcid, h->record.rcid,
+		 h->record.tx_head, h->record.rx_tail);
+	return h;
+}
+#else
+static struct be7000_rpm_handoff *
+be7000_rpm_prepare(struct device *dev, struct glink_rpm_pipe *rx,
+		   struct glink_rpm_pipe *tx)
+{
+	return NULL;
+}
+#endif
+
 static int glink_rpm_probe(struct platform_device *pdev)
 {
 	struct qcom_glink *glink;
+	struct be7000_rpm_handoff *handoff;
 	struct glink_rpm_pipe *rx_pipe;
 	struct glink_rpm_pipe *tx_pipe;
 	struct device_node *np;
@@ -294,14 +376,18 @@ static int glink_rpm_probe(struct platform_device *pdev)
 	tx_pipe->native.avail = glink_rpm_tx_avail;
 	tx_pipe->native.write = glink_rpm_tx_write;
 
-	writel(0, tx_pipe->head);
-	writel(0, rx_pipe->tail);
-
-	glink = qcom_glink_native_probe(&pdev->dev,
-					0,
-					&rx_pipe->native,
-					&tx_pipe->native,
-					true);
+	handoff = be7000_rpm_prepare(dev, rx_pipe, tx_pipe);
+	if (IS_ERR(handoff))
+		return PTR_ERR(handoff);
+	if (handoff) {
+		glink = qcom_glink_native_probe_handoff(dev, &rx_pipe->native,
+						      &tx_pipe->native, handoff);
+	} else {
+		writel(0, tx_pipe->head);
+		writel(0, rx_pipe->tail);
+		glink = qcom_glink_native_probe(dev, 0, &rx_pipe->native,
+					       &tx_pipe->native, true);
+	}
 	if (IS_ERR(glink))
 		return PTR_ERR(glink);
 

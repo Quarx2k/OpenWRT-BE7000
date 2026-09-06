@@ -29,6 +29,16 @@ config RPMSG_QCOM_GLINK_RPM
 	  which serves as a channel for communication with the RPM in GLINK
 	  enabled systems.
 
+config BE7000_KEXEC_HANDOFF
+	bool "Xiaomi BE7000 retained RPM channel after kexec"
+	depends on ARM64 && !CPU_BIG_ENDIAN && OF
+	depends on RPMSG_QCOM_GLINK_RPM=y
+	help
+	  Receive the pointer-free RGLH v1 record left by the v62 kexec
+	  modules. Enable with be7000_handoff=1 and boot with maxcpus=1.
+	  RPM keeps running; this kernel recreates its own GLINK objects.
+	  The target DTB must retain the Xiaomi rsvd2 no-map reservation.
+
 config RPMSG_QCOM_GLINK_SMEM
 	tristate "Qualcomm SMEM Glink driver"
 	select RPMSG_QCOM_GLINK_NATIVE

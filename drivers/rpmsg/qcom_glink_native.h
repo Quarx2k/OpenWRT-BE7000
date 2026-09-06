@@ -38,6 +38,12 @@ struct glink_smem_pipe {
 #define to_smem_pipe(p) container_of(p, struct glink_smem_pipe, native)
 
 struct qcom_glink;
+struct be7000_rpm_handoff;
+
+struct qcom_glink *qcom_glink_native_probe_handoff(struct device *dev,
+					struct qcom_glink_pipe *rx,
+					struct qcom_glink_pipe *tx,
+					struct be7000_rpm_handoff *handoff);
 
 struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 					   unsigned long features,
