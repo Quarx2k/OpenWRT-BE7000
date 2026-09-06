@@ -28,6 +28,7 @@
 #include "core.h"
 #include "nl80211.h"
 #include "reg.h"
+#include "qcom-he-compat.h"
 #include "rdev-ops.h"
 
 static int nl80211_crypto_settings(struct cfg80211_registered_device *rdev,
@@ -314,11 +315,21 @@ nl80211_pmsr_attr_policy[NL80211_PMSR_ATTR_MAX + 1] = {
 };
 
 static const struct nla_policy
-he_obss_pd_policy[NL80211_HE_OBSS_PD_ATTR_MAX + 1] = {
+he_obss_pd_policy[QCOM_HE_SR_CTRL + 1] = {
 	[NL80211_HE_OBSS_PD_ATTR_MIN_OFFSET] =
 		NLA_POLICY_RANGE(NLA_U8, 1, 20),
 	[NL80211_HE_OBSS_PD_ATTR_MAX_OFFSET] =
 		NLA_POLICY_RANGE(NLA_U8, 1, 20),
+	[QCOM_HE_NON_SRG_MAX] = NLA_POLICY_RANGE(NLA_U8, 1, 20),
+	[QCOM_HE_COLOR_BITMAP] = NLA_POLICY_EXACT_LEN(8),
+	[QCOM_HE_BSSID_BITMAP] = NLA_POLICY_EXACT_LEN(8),
+	[QCOM_HE_SR_CTRL] = { .type = NLA_U8 },
+};
+
+static const struct nla_policy qcom_he_color_policy[4] = {
+	[1] = NLA_POLICY_RANGE(NLA_U8, 1, 63),
+	[2] = { .type = NLA_FLAG },
+	[3] = { .type = NLA_FLAG },
 };
 
 const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
@@ -628,6 +639,7 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 					.len = SAE_PASSWORD_MAX_LEN },
 	[NL80211_ATTR_TWT_RESPONDER] = { .type = NLA_FLAG },
 	[NL80211_ATTR_HE_OBSS_PD] = NLA_POLICY_NESTED(he_obss_pd_policy),
+	[NL80211_ATTR_HE_BSS_COLOR] = NLA_POLICY_NESTED(qcom_he_color_policy),
 	[NL80211_ATTR_VLAN_ID] = NLA_POLICY_RANGE(NLA_U16, 1, VLAN_N_VID - 2),
 	[NL80211_ATTR_SAE_PWE] = NLA_POLICY_RANGE(NLA_U8, NL80211_SAE_PWE_HUNT_AND_PECK,
 						  NL80211_SAE_PWE_BOTH),
@@ -4738,6 +4750,8 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 	struct net_device *dev = info->user_ptr[1];
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct cfg80211_ap_settings params;
+	struct qcom_he_config he = {};
+	bool qcom_he = qcom_he_compat_active(rdev);
 	struct cfg80211_mlo_info *ml_info = NULL;
 	int err, tmp, i;
 	struct nlattr *attr;
@@ -4899,7 +4913,11 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 	params.twt_responder =
 		    nla_get_flag(info->attrs[NL80211_ATTR_TWT_RESPONDER]);
 
-	if (info->attrs[NL80211_ATTR_HE_OBSS_PD]) {
+	if (qcom_he) {
+		err = qcom_he_parse(info, &he);
+		if (err)
+			goto out;
+	} else if (info->attrs[NL80211_ATTR_HE_OBSS_PD]) {
 		err = nl80211_parse_he_obss_pd(
 					info->attrs[NL80211_ATTR_HE_OBSS_PD],
 					&params.he_obss_pd);
@@ -4936,6 +4954,12 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 	if (info->attrs[NL80211_ATTR_EXTERNAL_AUTH_SUPPORT])
 		params.flags |= AP_SETTINGS_EXTERNAL_AUTH_SUPPORT;
 
+	if (qcom_he) {
+		err = qcom_he_apply(rdev, wdev, info, &he);
+		if (err)
+			goto out;
+	}
+
 	wdev_lock(wdev);
 	err = rdev_start_ap(rdev, dev, &params);
 	if (!err) {
@@ -4962,6 +4986,7 @@ static int nl80211_set_beacon(struct sk_buff *skb, struct genl_info *info)
 	struct net_device *dev = info->user_ptr[1];
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct cfg80211_beacon_data params;
+	struct qcom_he_config he;
 	int err;
 
 	if (dev->ieee80211_ptr->iftype != NL80211_IFTYPE_AP &&
@@ -4977,6 +5002,15 @@ static int nl80211_set_beacon(struct sk_buff *skb, struct genl_info *info)
 	err = nl80211_parse_beacon(rdev, info->attrs, &params);
 	if (err)
 		return err;
+
+	if (qcom_he_compat_active(rdev)) {
+		err = qcom_he_parse(info, &he);
+		if (err)
+			return err;
+		err = qcom_he_apply(rdev, wdev, info, &he);
+		if (err)
+			return err;
+	}
 
 	wdev_lock(wdev);
 	err = rdev_change_beacon(rdev, dev, &params);
