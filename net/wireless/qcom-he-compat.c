@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* BE7000 stock2024 QSDK control adapter. No closed-driver ABI extensions. */
 #include <linux/module.h>
+#include <linux/if_arp.h>
 #include <asm/unaligned.h>
 #include "core.h"
 #include "qcom-he-compat.h"
@@ -24,6 +25,18 @@ static const struct wiphy_vendor_command *qcom_he_command(struct wiphy *wiphy)
 bool qcom_he_compat_active(struct cfg80211_registered_device *rdev)
 {
 	return be7000_he_compat && qcom_he_command(&rdev->wiphy);
+}
+
+/* QSDK registers raw radio-control netdevs as wireless interfaces. Keep
+ * them for direct vendor requests, but do not advertise them as usable VAPs.
+ * Match raw AP controls only; Ethernet data and monitor VAPs stay visible.
+ */
+bool qcom_is_radio_control(struct cfg80211_registered_device *rdev,
+			   struct wireless_dev *wdev)
+{
+	return qcom_he_compat_active(rdev) && wdev->netdev &&
+	       wdev->iftype == NL80211_IFTYPE_AP &&
+	       wdev->netdev->type == ARPHRD_IEEE80211;
 }
 
 /* The outer policy validates widths/ranges. Parse again for semantic checks. */
@@ -216,19 +229,31 @@ int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
 
 	if (!rdev->ops->set_tx_power || !chandef->chan)
 		return -EOPNOTSUPP;
-	if (dbm && chandef->chan->max_power < 1)
+	if (dbm >= 0 && chandef->chan->max_power < 0)
 		return -EOPNOTSUPP;
-	if (dbm)
+	if (dbm >= 0)
 		dbm = min(dbm, chandef->chan->max_power);
-	if (dbm < 0)
-		return -EOPNOTSUPP;
-	/* The QSDK callback only handles FIXED and expects whole dBm.
-	 * Its legacy value 0 restores automatic power, not 0 dBm.
+	/* The legacy automatic branch only restores the 5 GHz limit. Restore
+	 * the 2 GHz limit explicitly before it clears the fixed-power flag.
+	 */
+	if (dbm < 0 && chandef->chan->band == NL80211_BAND_2GHZ) {
+		if (chandef->chan->max_power < 1)
+			return -EOPNOTSUPP;
+		err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
+					    NL80211_TX_POWER_FIXED,
+					    chandef->chan->max_power);
+		if (err)
+			return err;
+	}
+	/* QSDK normally takes whole dBm; literal zero restores automatic.
+	 * Its >255 encoding passes the low byte as half-dBm while keeping
+	 * the fixed-power flag. Thus 0x100 represents fixed 0 dBm.
 	 */
 	err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
-				    NL80211_TX_POWER_FIXED, dbm);
+				    NL80211_TX_POWER_FIXED,
+				    dbm < 0 ? 0 : dbm ? dbm : 0x100);
 	if (!err)
-		pr_info("cfg80211: BE7000 power %s %d dBm (0=auto) applied\n",
+		pr_info("cfg80211: BE7000 power %s %d dBm (-1=auto) applied\n",
 			wdev->netdev->name, dbm);
 	return err;
 }
@@ -243,12 +268,12 @@ int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
 	ASSERT_RTNL();
 	switch (type) {
 	case NL80211_TX_POWER_AUTOMATIC:
-		dbm = 0;
+		dbm = -1;
 		break;
 	case NL80211_TX_POWER_FIXED:
 	case NL80211_TX_POWER_LIMITED:
-		/* QSDK cannot represent fixed 0 dBm or fractional dBm. */
-		if (mbm < 100 || mbm % 100)
+		/* Keep the standard integer-dBm range used by OpenWrt. */
+		if (mbm < 0 || mbm % 100)
 			return -EOPNOTSUPP;
 		dbm = mbm / 100;
 		for (b = 0; b < NUM_NL80211_BANDS; b++) {

@@ -30,6 +30,7 @@
 #include "debugfs.h"
 #include "wext-compat.h"
 #include "rdev-ops.h"
+#include "qcom-he-compat.h"
 
 /* name for sysfs, %d is appended */
 #define PHY_NAME "phy"
@@ -427,6 +428,7 @@ struct wiphy *wiphy_new_nm(const struct cfg80211_ops *ops, int sizeof_priv,
 		return NULL;
 
 	rdev->ops = ops;
+	rdev->qcom_txpower_dbm = -1;
 
 	rdev->wiphy_idx = atomic_inc_return(&wiphy_counter);
 
@@ -1304,7 +1306,8 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
 		 * called within code protected by it when interfaces
 		 * are added with nl80211.
 		 */
-		if (sysfs_create_link(&dev->dev.kobj, &rdev->wiphy.dev.kobj,
+		if (!qcom_is_radio_control(rdev, wdev) &&
+		    sysfs_create_link(&dev->dev.kobj, &rdev->wiphy.dev.kobj,
 				      "phy80211")) {
 			pr_err("failed to add phy80211 symlink to netdev!\n");
 		}

@@ -27,4 +27,6 @@ int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
 int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
 			struct wireless_dev *wdev,
 			const struct cfg80211_chan_def *chandef, int dbm);
+bool qcom_is_radio_control(struct cfg80211_registered_device *rdev,
+			   struct wireless_dev *wdev);
 #endif

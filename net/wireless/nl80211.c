@@ -3409,6 +3409,8 @@ static int nl80211_dump_interface(struct sk_buff *skb, struct netlink_callback *
 		if_idx = 0;
 
 		list_for_each_entry(wdev, &rdev->wiphy.wdev_list, list) {
+			if (qcom_is_radio_control(rdev, wdev))
+				continue;
 			if (if_idx < if_start) {
 				if_idx++;
 				continue;
@@ -15045,6 +15047,9 @@ void nl80211_notify_iface(struct cfg80211_registered_device *rdev,
 				enum nl80211_commands cmd)
 {
 	struct sk_buff *msg;
+
+	if (qcom_is_radio_control(rdev, wdev))
+		return;
 
 	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 	if (!msg)
