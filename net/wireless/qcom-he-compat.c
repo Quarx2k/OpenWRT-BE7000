@@ -207,3 +207,76 @@ int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy)
 		features[7] |= BIT(3); /* modern FILS_CRYPTO_OFFLOAD = 59 */
 	return nla_put(msg, NL80211_ATTR_EXT_FEATURES, sizeof(features), features);
 }
+
+int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
+			struct wireless_dev *wdev,
+			const struct cfg80211_chan_def *chandef, int dbm)
+{
+	int err;
+
+	if (!rdev->ops->set_tx_power || !chandef->chan)
+		return -EOPNOTSUPP;
+	if (dbm && chandef->chan->max_power < 1)
+		return -EOPNOTSUPP;
+	if (dbm)
+		dbm = min(dbm, chandef->chan->max_power);
+	if (dbm < 0)
+		return -EOPNOTSUPP;
+	/* The QSDK callback only handles FIXED and expects whole dBm.
+	 * Its legacy value 0 restores automatic power, not 0 dBm.
+	 */
+	err = rdev->ops->set_tx_power(&rdev->wiphy, wdev,
+				    NL80211_TX_POWER_FIXED, dbm);
+	if (!err)
+		pr_info("cfg80211: BE7000 power %s %d dBm (0=auto) applied\n",
+			wdev->netdev->name, dbm);
+	return err;
+}
+
+int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
+		      enum nl80211_tx_power_setting type, int mbm)
+{
+	struct wireless_dev *wdev;
+	struct ieee80211_supported_band *band;
+	int dbm, max_dbm = 0, b, c, err;
+
+	ASSERT_RTNL();
+	switch (type) {
+	case NL80211_TX_POWER_AUTOMATIC:
+		dbm = 0;
+		break;
+	case NL80211_TX_POWER_FIXED:
+	case NL80211_TX_POWER_LIMITED:
+		/* QSDK cannot represent fixed 0 dBm or fractional dBm. */
+		if (mbm < 100 || mbm % 100)
+			return -EOPNOTSUPP;
+		dbm = mbm / 100;
+		for (b = 0; b < NUM_NL80211_BANDS; b++) {
+			band = rdev->wiphy.bands[b];
+			if (!band)
+				continue;
+			for (c = 0; c < band->n_channels; c++)
+				if (!(band->channels[c].flags & IEEE80211_CHAN_DISABLED))
+					max_dbm = max(max_dbm, band->channels[c].max_power);
+		}
+		if (dbm > max_dbm)
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* OpenWrt sets power on the PHY before creating AP interfaces. Cache
+	 * the request and replay it on START_AP. Existing APs update now.
+	 * The vendor setter changes the radio's power limit, not per-VAP RF.
+	 */
+	list_for_each_entry(wdev, &rdev->wiphy.wdev_list, list) {
+		if (!wdev->netdev || !wdev->beacon_interval)
+			continue;
+		err = qcom_apply_tx_power(rdev, wdev, &wdev->chandef, dbm);
+		if (err)
+			return err;
+	}
+	rdev->qcom_txpower_dbm = dbm;
+	return 0;
+}

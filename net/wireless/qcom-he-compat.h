@@ -22,4 +22,9 @@ int qcom_he_apply(struct cfg80211_registered_device *rdev,
 int qcom_eht_put_cap(struct sk_buff *msg,
 		     const struct ieee80211_sta_eht_cap *cap);
 int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy);
+int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
+		      enum nl80211_tx_power_setting type, int mbm);
+int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
+			struct wireless_dev *wdev,
+			const struct cfg80211_chan_def *chandef, int dbm);
 #endif

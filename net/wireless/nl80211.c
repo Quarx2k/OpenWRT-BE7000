@@ -3054,7 +3054,10 @@ static int nl80211_set_wiphy(struct sk_buff *skb, struct genl_info *info)
 			mbm = nla_get_u32(info->attrs[idx]);
 		}
 
-		result = rdev_set_tx_power(rdev, txp_wdev, type, mbm);
+		if (qcom_he_compat_active(rdev))
+			result = qcom_set_tx_power(rdev, type, mbm);
+		else
+			result = rdev_set_tx_power(rdev, txp_wdev, type, mbm);
 		if (result)
 			return result;
 	}
@@ -4972,6 +4975,12 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 
 	wdev_lock(wdev);
 	err = rdev_start_ap(rdev, dev, &params);
+	if (!err && qcom_he) {
+		err = qcom_apply_tx_power(rdev, wdev, &params.chandef,
+					 rdev->qcom_txpower_dbm);
+		if (err)
+			rdev_stop_ap(rdev, dev);
+	}
 	if (!err) {
 		wdev->preset_chandef = params.chandef;
 		wdev->beacon_interval = params.beacon_interval;

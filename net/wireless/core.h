@@ -103,6 +103,11 @@ struct cfg80211_registered_device {
 	struct cfg80211_chan_def cac_done_chandef;
 	struct work_struct propagate_cac_done_wk;
 
+	/* QSDK radio-wide power request, dBm; 0 means automatic. RTNL held.
+	 * Keep this state private: closed drivers only see struct wiphy.
+	 */
+	int qcom_txpower_dbm;
+
 	/* must be last because of the way we do wiphy_priv(),
 	 * and it should at least be aligned to NETDEV_ALIGN */
 	struct wiphy wiphy __aligned(NETDEV_ALIGN);
