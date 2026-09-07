@@ -19,4 +19,7 @@ int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg);
 int qcom_he_apply(struct cfg80211_registered_device *rdev,
 		  struct wireless_dev *wdev, struct genl_info *info,
 		  const struct qcom_he_config *cfg);
+int qcom_eht_put_cap(struct sk_buff *msg,
+		     const struct ieee80211_sta_eht_cap *cap);
+int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy);
 #endif

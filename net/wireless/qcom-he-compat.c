@@ -154,3 +154,56 @@ failed:
 	NL_SET_ERR_MSG(info->extack, "QSDK driver rejected HE configuration");
 	return err;
 }
+
+/* QSDK stores the firmware's separate RX/TX NSS nibbles for MCS 0-7,
+ * 8-9, 10-11 and 12-13. Current nl80211 uses combined RX/TX bytes for
+ * MCS 0-9, 10-11 and 12-13 at each bandwidth (as does ath12k).
+ */
+static void qcom_eht_mcs(u8 *out, u32 rx, u32 tx)
+{
+	out[0] = min(rx & 0xf, (rx >> 4) & 0xf) |
+		 (min(tx & 0xf, (tx >> 4) & 0xf) << 4);
+	out[1] = ((rx >> 8) & 0xf) | (((tx >> 8) & 0xf) << 4);
+	out[2] = ((rx >> 12) & 0xf) | (((tx >> 12) & 0xf) << 4);
+}
+
+int qcom_eht_put_cap(struct sk_buff *msg,
+		     const struct ieee80211_sta_eht_cap *cap)
+{
+	const struct ieee80211_eht_mcs_nss_supp *mcs = &cap->eht_mcs_nss_supp;
+	u8 phy[9], mcs_set[9];
+
+	/* QSDK's padded fields and public structures must retain their ABI.
+	 * The modern wire format has MAC[2], PHY[9] and MCS[9]. Attribute 7
+	 * is now VENDOR_ELEMS; EHT starts at 8 instead of QSDK's 7.
+	 */
+	memcpy(phy, cap->eht_cap_elem.phy_cap_info, sizeof(phy));
+	/* This QSDK ABI has no EHT PPE thresholds to export. */
+	phy[5] &= ~BIT(3);
+	qcom_eht_mcs(mcs_set, le32_to_cpu(mcs->rx_mcs_80),
+		     le32_to_cpu(mcs->tx_mcs_80));
+	qcom_eht_mcs(mcs_set + 3, le32_to_cpu(mcs->rx_mcs_160),
+		     le32_to_cpu(mcs->tx_mcs_160));
+	qcom_eht_mcs(mcs_set + 6, le32_to_cpu(mcs->rx_mcs_320),
+		     le32_to_cpu(mcs->tx_mcs_320));
+	if (nla_put(msg, 8, 2, cap->eht_cap_elem.mac_cap_info) ||
+	    nla_put(msg, 9, sizeof(phy), phy) ||
+	    nla_put(msg, 10, sizeof(mcs_set), mcs_set))
+		return -ENOBUFS;
+	return 0;
+}
+
+int qcom_put_ext_features(struct sk_buff *msg, struct wiphy *wiphy)
+{
+	u8 features[8] = {};
+
+	memcpy(features, wiphy->ext_features, sizeof(wiphy->ext_features));
+	/* QSDK bit 40 is FILS crypto offload, modern bit 40 is AQL.
+	 * QSDK bit 43 is its private MLO flag, not protected TWT.
+	 * Modern MLO requires a separate API that this adapter cannot expose.
+	 */
+	features[5] &= ~(BIT(0) | BIT(3));
+	if (wiphy_ext_feature_isset(wiphy, NL80211_EXT_FEATURE_FILS_CRYPTO_OFFLOAD))
+		features[7] |= BIT(3); /* modern FILS_CRYPTO_OFFLOAD = 59 */
+	return nla_put(msg, NL80211_ATTR_EXT_FEATURES, sizeof(features), features);
+}

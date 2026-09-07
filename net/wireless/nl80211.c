@@ -1570,7 +1570,8 @@ static int nl80211_send_coalesce(struct sk_buff *msg,
 
 static int
 nl80211_send_iftype_data(struct sk_buff *msg,
-			 const struct ieee80211_sband_iftype_data *iftdata)
+			 const struct ieee80211_sband_iftype_data *iftdata,
+			 bool qcom_compat)
 {
 	const struct ieee80211_sta_he_cap *he_cap = &iftdata->he_cap;
 	const struct ieee80211_sta_eht_cap *eht_cap = &iftdata->eht_cap;
@@ -1595,6 +1596,8 @@ nl80211_send_iftype_data(struct sk_buff *msg,
 	}
 
 	if (eht_cap->has_eht) {
+		if (qcom_compat)
+			return qcom_eht_put_cap(msg, eht_cap);
 		if (nla_put(msg, NL80211_BAND_IFTYPE_ATTR_EHT_CAP_MAC,
 					sizeof(eht_cap->eht_cap_elem.mac_cap_info),
 					eht_cap->eht_cap_elem.mac_cap_info) ||
@@ -1611,7 +1614,8 @@ nl80211_send_iftype_data(struct sk_buff *msg,
 }
 
 static int nl80211_send_band_rateinfo(struct sk_buff *msg,
-				      struct ieee80211_supported_band *sband)
+				      struct ieee80211_supported_band *sband,
+				      bool qcom_compat)
 {
 	struct nlattr *nl_rates, *nl_rate;
 	struct ieee80211_rate *rate;
@@ -1656,7 +1660,8 @@ static int nl80211_send_band_rateinfo(struct sk_buff *msg,
 				return -ENOBUFS;
 
 			err = nl80211_send_iftype_data(msg,
-						       &sband->iftype_data[i]);
+						       &sband->iftype_data[i],
+						       qcom_compat);
 			if (err)
 				return err;
 
@@ -2104,7 +2109,8 @@ static int nl80211_send_wiphy(struct cfg80211_registered_device *rdev,
 
 			switch (state->chan_start) {
 			case 0:
-				if (nl80211_send_band_rateinfo(msg, sband))
+				if (nl80211_send_band_rateinfo(msg, sband,
+						qcom_he_compat_active(rdev)))
 					goto nla_put_failure;
 				state->chan_start++;
 				if (state->split)
@@ -2389,10 +2395,14 @@ static int nl80211_send_wiphy(struct cfg80211_registered_device *rdev,
 				rdev->wiphy.max_sched_scan_reqs))
 			goto nla_put_failure;
 
-		if (nla_put(msg, NL80211_ATTR_EXT_FEATURES,
-			    sizeof(rdev->wiphy.ext_features),
-			    rdev->wiphy.ext_features))
+		if (qcom_he_compat_active(rdev)) {
+			if (qcom_put_ext_features(msg, &rdev->wiphy))
+				goto nla_put_failure;
+		} else if (nla_put(msg, NL80211_ATTR_EXT_FEATURES,
+				   sizeof(rdev->wiphy.ext_features),
+				   rdev->wiphy.ext_features)) {
 			goto nla_put_failure;
+		}
 
 		if (rdev->wiphy.bss_select_support) {
 			struct nlattr *nested;
