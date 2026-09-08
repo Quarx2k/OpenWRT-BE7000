@@ -1394,7 +1394,10 @@ enum nl80211_commands {
 
 	NL80211_CMD_SET_FILS_AAD,
 
+	/* Upstream wire IDs; keep the existing QSDK IDs for vendor userspace. */
+	NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS_STANDARD = 139,
 	NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS = 140,
+	NL80211_CMD_SET_FILS_AAD_STANDARD = 146,
 
 	/* add new commands above here */
 
@@ -2992,6 +2995,8 @@ enum nl80211_attrs {
 
 	NL80211_ATTR_SAE_PWE = 298,
 
+	/* Upstream number; keep the QSDK ABI at 350 for vendor userspace. */
+	NL80211_ATTR_EHT_CAPABILITY_STANDARD = 310,
 	NL80211_ATTR_EHT_CAPABILITY = 350,
 	NL80211_ATTR_EHT_PUNCTURE_BITMAP,
 	NL80211_ATTR_MLD_MAC,

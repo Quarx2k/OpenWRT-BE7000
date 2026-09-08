@@ -372,7 +372,7 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 	[NL80211_ATTR_KEY] = { .type = NLA_NESTED, },
 	[NL80211_ATTR_KEY_DATA] = { .type = NLA_BINARY,
 				    .len = WLAN_MAX_KEY_LEN },
-	[NL80211_ATTR_KEY_IDX] = NLA_POLICY_MAX(NLA_U8, 5),
+	[NL80211_ATTR_KEY_IDX] = NLA_POLICY_MAX(NLA_U8, 7),
 	[NL80211_ATTR_KEY_CIPHER] = { .type = NLA_U32 },
 	[NL80211_ATTR_KEY_DEFAULT] = { .type = NLA_FLAG },
 	[NL80211_ATTR_KEY_SEQ] = { .type = NLA_BINARY, .len = 16 },
@@ -644,6 +644,8 @@ const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 	[NL80211_ATTR_SAE_PWE] = NLA_POLICY_RANGE(NLA_U8, NL80211_SAE_PWE_HUNT_AND_PECK,
 						  NL80211_SAE_PWE_BOTH),
 	[NL80211_ATTR_EHT_CAPABILITY] = { .type = NLA_BINARY,
+					 .len = NL80211_EHT_MAX_CAPABILITY_LEN },
+	[NL80211_ATTR_EHT_CAPABILITY_STANDARD] = { .type = NLA_BINARY,
 					 .len = NL80211_EHT_MAX_CAPABILITY_LEN },
 	[NL80211_ATTR_EHT_PUNCTURE_BITMAP] = { .type = NLA_U32 },
 	[NL80211_ATTR_CONTROL_PORT_NO_PREAUTH] = { .type = NLA_FLAG },
@@ -1219,7 +1221,7 @@ static int nl80211_parse_key(struct genl_info *info, struct key_parse *k)
 			}
 		} else {
 			if (k->idx < 0 || k->idx > 7) {
-				GENL_SET_ERR_MSG(info, "key idx not 0-5");
+				GENL_SET_ERR_MSG(info, "key idx not 0-7");
 				return -EINVAL;
 			}
 		}
@@ -5841,6 +5843,11 @@ static int nl80211_set_station_tdls(struct genl_info *info,
 			return -EINVAL;
 	}
 
+	/* Modern hostapd sends the upstream EHT attribute number. */
+	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD])
+		info->attrs[NL80211_ATTR_EHT_CAPABILITY] =
+			info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD];
+
 	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY]) {
 		params->eht_capa =
 			nla_data(info->attrs[NL80211_ATTR_EHT_CAPABILITY]);
@@ -6105,6 +6112,11 @@ static int nl80211_new_station(struct sk_buff *skb, struct genl_info *info)
 		if (params.he_capa_len < NL80211_HE_MIN_CAPABILITY_LEN)
 			return -EINVAL;
 	}
+
+	/* Modern hostapd sends the upstream EHT attribute number. */
+	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD])
+		info->attrs[NL80211_ATTR_EHT_CAPABILITY] =
+			info->attrs[NL80211_ATTR_EHT_CAPABILITY_STANDARD];
 
 	if (info->attrs[NL80211_ATTR_EHT_CAPABILITY]) {
 		params.eht_capa =
@@ -14999,6 +15011,13 @@ static const struct genl_ops nl80211_ops[] = {
 		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
 				  NL80211_FLAG_NEED_RTNL,
 	},
+	{
+		.cmd = NL80211_CMD_SET_FILS_AAD_STANDARD,
+		.doit = nl80211_set_fils_aad,
+		.flags = GENL_ADMIN_PERM,
+		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
+				  NL80211_FLAG_NEED_RTNL,
+	},
 };
 
 static struct genl_family nl80211_fam __ro_after_init = {
@@ -16159,8 +16178,12 @@ void cfg80211_control_port_tx_status(struct wireless_dev *wdev, u64 cookie,
 				     const u8 *buf, size_t len, bool ack,
 				     gfp_t gfp)
 {
-	nl80211_frame_tx_status(wdev, cookie, buf, len, ack, gfp,
-				NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS);
+	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
+	enum nl80211_commands cmd = NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS;
+
+	if (qcom_he_compat_active(rdev))
+		cmd = NL80211_CMD_CONTROL_PORT_FRAME_TX_STATUS_STANDARD;
+	nl80211_frame_tx_status(wdev, cookie, buf, len, ack, gfp, cmd);
 }
 EXPORT_SYMBOL(cfg80211_control_port_tx_status);
 
