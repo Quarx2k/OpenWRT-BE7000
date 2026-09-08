@@ -4985,6 +4985,8 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 		if (err)
 			rdev_stop_ap(rdev, dev);
 	}
+	if (!err && qcom_he)
+		qcom_sta_enable_stats(rdev);
 	if (!err) {
 		wdev->preset_chandef = params.chandef;
 		wdev->beacon_interval = params.beacon_interval;
@@ -5460,6 +5462,33 @@ static int nl80211_send_station(struct sk_buff *msg, u32 cmd, u32 portid,
 	return -EMSGSIZE;
 }
 
+static int qcom_dump_station(struct sk_buff *skb, struct netlink_callback *cb,
+			     struct cfg80211_registered_device *rdev,
+			     struct wireless_dev *wdev)
+{
+	struct qcom_sta_query query;
+	struct qcom_sta_entry *entry;
+	struct station_info sinfo;
+	unsigned int index = 0;
+	int err = qcom_sta_query(rdev, wdev, &query);
+
+	if (err)
+		return err;
+	list_for_each_entry(entry, &query.entries, list) {
+		if (index++ < cb->args[2])
+			continue;
+		qcom_sta_info(rdev, wdev, entry, &sinfo);
+		if (nl80211_send_station(skb, NL80211_CMD_NEW_STATION,
+					NETLINK_CB(cb->skb).portid,
+					cb->nlh->nlmsg_seq, NLM_F_MULTI,
+					rdev, wdev->netdev, entry->mac, &sinfo) < 0)
+			break;
+		cb->args[2]++;
+	}
+	qcom_sta_free(&query);
+	return skb->len;
+}
+
 static int nl80211_dump_station(struct sk_buff *skb,
 				struct netlink_callback *cb)
 {
@@ -5477,6 +5506,11 @@ static int nl80211_dump_station(struct sk_buff *skb,
 
 	if (!wdev->netdev) {
 		err = -EINVAL;
+		goto out_err;
+	}
+
+	if (qcom_sta_compat(rdev, wdev)) {
+		err = qcom_dump_station(skb, cb, rdev, wdev);
 		goto out_err;
 	}
 
@@ -5532,7 +5566,25 @@ static int nl80211_get_station(struct sk_buff *skb, struct genl_info *info)
 	if (!rdev->ops->get_station)
 		return -EOPNOTSUPP;
 
-	err = rdev_get_station(rdev, dev, mac_addr, &sinfo);
+	if (qcom_sta_compat(rdev, dev->ieee80211_ptr)) {
+		struct qcom_sta_query query;
+		struct qcom_sta_entry *entry;
+
+		err = qcom_sta_query(rdev, dev->ieee80211_ptr, &query);
+		if (err)
+			return err;
+		err = -ENOENT;
+		list_for_each_entry(entry, &query.entries, list) {
+			if (!ether_addr_equal(entry->mac, mac_addr))
+				continue;
+			qcom_sta_info(rdev, dev->ieee80211_ptr, entry, &sinfo);
+			err = 0;
+			break;
+		}
+		qcom_sta_free(&query);
+	} else {
+		err = rdev_get_station(rdev, dev, mac_addr, &sinfo);
+	}
 	if (err)
 		return err;
 
@@ -13407,6 +13459,10 @@ struct sk_buff *__cfg80211_alloc_reply_skb(struct wiphy *wiphy,
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 
+	if (rdev->qcom_sta_query)
+		return __cfg80211_alloc_vendor_skb(rdev, NULL, approxlen,
+						   0, 0, cmd, attr, NULL, GFP_KERNEL);
+
 	if (WARN_ON(!rdev->cur_cmd_info))
 		return NULL;
 
@@ -13422,6 +13478,15 @@ int cfg80211_vendor_cmd_reply(struct sk_buff *skb)
 	struct cfg80211_registered_device *rdev = ((void **)skb->cb)[0];
 	void *hdr = ((void **)skb->cb)[1];
 	struct nlattr *data = ((void **)skb->cb)[2];
+
+	if (rdev->qcom_sta_query) {
+		int err;
+
+		nla_nest_end(skb, data);
+		err = qcom_sta_reply(rdev->qcom_sta_query, data);
+		kfree_skb(skb);
+		return err;
+	}
 
 	/* clear CB data for netlink core to own from now on */
 	memset(skb->cb, 0, sizeof(skb->cb));

@@ -29,4 +29,27 @@ int qcom_apply_tx_power(struct cfg80211_registered_device *rdev,
 			const struct cfg80211_chan_def *chandef, int dbm);
 bool qcom_is_radio_control(struct cfg80211_registered_device *rdev,
 			   struct wireless_dev *wdev);
+
+struct qcom_sta_entry {
+	struct list_head list;
+	u8 mac[ETH_ALEN];
+	s8 signal;
+	u8 bw;
+	u32 tx_kbps, rx_kbps, connected, inactive;
+};
+struct qcom_sta_query {
+	struct list_head entries;
+	unsigned int count;
+	int error;
+};
+bool qcom_sta_compat(struct cfg80211_registered_device *rdev,
+		     struct wireless_dev *wdev);
+int qcom_sta_query(struct cfg80211_registered_device *rdev,
+		   struct wireless_dev *wdev, struct qcom_sta_query *query);
+int qcom_sta_reply(struct qcom_sta_query *query, struct nlattr *data);
+void qcom_sta_free(struct qcom_sta_query *query);
+void qcom_sta_info(struct cfg80211_registered_device *rdev,
+		   struct wireless_dev *wdev, struct qcom_sta_entry *entry,
+		   struct station_info *sinfo);
+void qcom_sta_enable_stats(struct cfg80211_registered_device *rdev);
 #endif

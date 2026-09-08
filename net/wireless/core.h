@@ -82,6 +82,8 @@ struct cfg80211_registered_device {
 	struct work_struct scan_done_wk;
 
 	struct genl_info *cur_cmd_info;
+	/* Synchronous QSDK station-list replies, protected by RTNL. */
+	struct qcom_sta_query *qcom_sta_query;
 
 	struct work_struct conn_work;
 	struct work_struct event_work;

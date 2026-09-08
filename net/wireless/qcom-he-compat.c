@@ -305,3 +305,176 @@ int qcom_set_tx_power(struct cfg80211_registered_device *rdev,
 	rdev->qcom_txpower_dbm = dbm;
 	return 0;
 }
+
+
+/* The QSDK AP driver implements GET_STATION but no station dump, and its
+ * GET_STATION response omits rates. Its vendor command 214 supplies the
+ * associated MACs and current rates. Consume these synchronous replies in
+ * cfg80211 so ordinary nl80211 clients do not need a vendor backend.
+ */
+bool qcom_sta_compat(struct cfg80211_registered_device *rdev,
+		     struct wireless_dev *wdev)
+{
+	return qcom_he_compat_active(rdev) && wdev->netdev &&
+	       wdev->netdev->type == ARPHRD_ETHER &&
+	       wdev->iftype == NL80211_IFTYPE_AP;
+}
+
+void qcom_sta_enable_stats(struct cfg80211_registered_device *rdev)
+{
+	struct wireless_dev *radio;
+	int err;
+
+	ASSERT_RTNL();
+	list_for_each_entry(radio, &rdev->wiphy.wdev_list, list) {
+		if (!qcom_is_radio_control(rdev, radio))
+			continue;
+		/* WIFI_PARAMS / OL_SPECIAL_PARAM_ENABLE_OL_STATS. QSDK's own
+		 * boot scripts enable this for Lithium radios. Otherwise the
+		 * firmware leaves peer counters, SNR and rate statistics stale.
+		 */
+		err = qcom_he_set(rdev, radio, 200, 0x200d, 1, 0, 0);
+		if (err)
+			pr_warn("cfg80211: BE7000 %s station statistics: %d\n",
+				radio->netdev->name, err);
+	}
+}
+
+int qcom_sta_reply(struct qcom_sta_query *query, struct nlattr *data)
+{
+	struct nlattr *attr;
+	int rem;
+
+	if (query->error)
+		return query->error;
+	nla_for_each_nested(attr, data, rem) {
+		const u8 *p = nla_data(attr);
+		int left = nla_len(attr);
+
+		if (nla_type(attr) != 1) /* QCA_WLAN_VENDOR_ATTR_PARAM_DATA */
+			continue;
+		while (left) {
+			struct qcom_sta_entry *entry;
+			u16 len;
+			int signal;
+
+			/* Stable ieee80211req_sta_info prefix in the BE7000 ABI:
+			 * len:0, noise:4, SNR:35, MAC:45, TX kbps:100,
+			 * inactivity seconds:180, association seconds:192,
+			 * RX kbps:212, current peer channel width:244.
+			 * IEs and newer tail fields follow the fixed record.
+			 */
+			if (left < 245)
+				goto malformed;
+			len = get_unaligned_le16(p);
+			if (len < 245 || len > left || !is_valid_ether_addr(p + 45))
+				goto malformed;
+			if (query->count >= 1024) {
+				query->error = -E2BIG;
+				return query->error;
+			}
+			entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+			if (!entry) {
+				query->error = -ENOMEM;
+				return query->error;
+			}
+			ether_addr_copy(entry->mac, p + 45);
+			signal = (s32)get_unaligned_le32(p + 4) + p[35];
+			entry->signal = clamp(signal, -127, 0);
+			entry->tx_kbps = get_unaligned_le32(p + 100);
+			entry->rx_kbps = get_unaligned_le32(p + 212);
+			entry->inactive = get_unaligned_le16(p + 180) * 1000;
+			switch (p[244]) {
+			case 1: entry->bw = RATE_INFO_BW_40; break;
+			case 2: entry->bw = RATE_INFO_BW_80; break;
+			case 3: entry->bw = RATE_INFO_BW_160; break;
+			default: entry->bw = RATE_INFO_BW_20; break;
+			}
+			entry->connected = min_t(u64, get_unaligned_le64(p + 192), U32_MAX);
+			list_add_tail(&entry->list, &query->entries);
+			query->count++;
+			p += len;
+			left -= len;
+		}
+	}
+	if (rem)
+		goto malformed;
+	return 0;
+malformed:
+	query->error = -EBADMSG;
+	return query->error;
+}
+
+void qcom_sta_free(struct qcom_sta_query *query)
+{
+	struct qcom_sta_entry *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &query->entries, list) {
+		list_del(&entry->list);
+		kfree(entry);
+	}
+}
+
+int qcom_sta_query(struct cfg80211_registered_device *rdev,
+		   struct wireless_dev *wdev, struct qcom_sta_query *query)
+{
+	const struct wiphy_vendor_command *cmd = qcom_he_command(&rdev->wiphy);
+	struct { struct nlattr attr; u32 value; } arg = {
+		.attr = { .nla_len = sizeof(arg), .nla_type = 17 },
+		.value = 214,
+	};
+	int err;
+
+	ASSERT_RTNL();
+	memset(query, 0, sizeof(*query));
+	INIT_LIST_HEAD(&query->entries);
+	if (!cmd || !qcom_sta_compat(rdev, wdev))
+		return -EOPNOTSUPP;
+	if (WARN_ON(rdev->qcom_sta_query))
+		return -EBUSY;
+	rdev->qcom_sta_query = query;
+	err = cmd->doit(&rdev->wiphy, wdev, &arg, sizeof(arg));
+	rdev->qcom_sta_query = NULL;
+	if (query->error)
+		err = query->error;
+	if (err > 0)
+		err = -EIO;
+	if (err)
+		qcom_sta_free(query);
+	return err;
+}
+
+void qcom_sta_info(struct cfg80211_registered_device *rdev,
+		   struct wireless_dev *wdev, struct qcom_sta_entry *entry,
+		   struct station_info *sinfo)
+{
+	memset(sinfo, 0, sizeof(*sinfo));
+	/* Keep the driver's packet/byte/retry counters and station flags. */
+	if (rdev->ops->get_station)
+		rdev->ops->get_station(&rdev->wiphy, wdev->netdev, entry->mac, sinfo);
+	sinfo->signal = entry->signal;
+	sinfo->connected_time = entry->connected;
+	sinfo->inactive_time = entry->inactive;
+	sinfo->filled |= BIT_ULL(NL80211_STA_INFO_SIGNAL) |
+			 BIT_ULL(NL80211_STA_INFO_CONNECTED_TIME) |
+			 BIT_ULL(NL80211_STA_INFO_INACTIVE_TIME);
+	if (sinfo->filled & BIT_ULL(NL80211_STA_INFO_BSS_PARAM))
+		sinfo->bss_param.beacon_interval = wdev->beacon_interval;
+	/* This vendor ABI supplies kbps and the current peer channel width,
+	 * but no per-packet MCS/GI.
+	 * Export only the measured bitrate; never substitute the maximum
+	 * negotiated rate or invent modulation details.
+	 */
+	if (entry->tx_kbps && entry->tx_kbps / 100 <= U16_MAX) {
+		memset(&sinfo->txrate, 0, sizeof(sinfo->txrate));
+		sinfo->txrate.legacy = entry->tx_kbps / 100;
+		sinfo->txrate.bw = entry->bw;
+		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_TX_BITRATE);
+	}
+	if (entry->rx_kbps && entry->rx_kbps / 100 <= U16_MAX) {
+		memset(&sinfo->rxrate, 0, sizeof(sinfo->rxrate));
+		sinfo->rxrate.legacy = entry->rx_kbps / 100;
+		sinfo->rxrate.bw = entry->bw;
+		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_RX_BITRATE);
+	}
+}
