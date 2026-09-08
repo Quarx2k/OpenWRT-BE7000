@@ -74,7 +74,7 @@ struct brnf_net {
 #define IS_ARP(skb) \
 	(!skb_vlan_tag_present(skb) && skb->protocol == htons(ETH_P_ARP))
 
-bool br_netfilter_run_hooks(struct net *net)
+static bool br_nf_run_hooks(struct net *net)
 {
 	struct brnf_net *brnf = net_generic(net, brnf_net_id);
 
@@ -927,6 +927,7 @@ static int br_nf_dev_xmit(struct sk_buff *skb)
 
 static const struct nf_br_ops br_ops = {
 	.br_dev_xmit_hook =	br_nf_dev_xmit,
+	.br_run_hooks =		br_nf_run_hooks,
 };
 
 /* For br_nf_post_routing, we need (prio = NF_BR_PRI_LAST), because
@@ -1211,6 +1212,7 @@ static int __init br_netfilter_init(void)
 static void __exit br_netfilter_fini(void)
 {
 	RCU_INIT_POINTER(nf_br_ops, NULL);
+	synchronize_net();
 	unregister_netdevice_notifier(&brnf_notifier);
 	unregister_pernet_subsys(&brnf_net_ops);
 }

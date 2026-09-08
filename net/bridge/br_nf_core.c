@@ -80,6 +80,21 @@ void br_netfilter_rtable_init(struct net_bridge *br)
 	rt->dst.ops = &fake_dst_ops;
 }
 
+bool br_netfilter_run_hooks(struct net *net)
+{
+	const struct nf_br_ops *ops;
+	bool run_hooks = true;
+
+	/* Bridge-family hooks may remain installed without br_netfilter. */
+	rcu_read_lock();
+	ops = rcu_dereference(nf_br_ops);
+	if (ops)
+		run_hooks = ops->br_run_hooks(net);
+	rcu_read_unlock();
+
+	return run_hooks;
+}
+
 int __init br_nf_core_init(void)
 {
 	return dst_entries_init(&fake_dst_ops);

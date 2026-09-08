@@ -1112,6 +1112,7 @@ static inline int br_vlan_bridge_event(struct net_device *dev,
 
 struct nf_br_ops {
 	int (*br_dev_xmit_hook)(struct sk_buff *skb);
+	bool (*br_run_hooks)(struct net *net);
 };
 extern const struct nf_br_ops __rcu *nf_br_ops;
 
