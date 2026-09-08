@@ -811,9 +811,6 @@ struct sk_buff {
 	__u8			csum_level:2;
 	__u8			csum_not_inet:1;
 	__u8			dst_pending_confirm:1;
-#ifdef CONFIG_IPV6_NDISC_NODETYPE
-	__u8			ndisc_nodetype:2;
-#endif
 
 	__u8			ipvs_property:1;
 	__u8			inner_protocol_type:1;
@@ -844,7 +841,10 @@ struct sk_buff {
 	__u8			fast_recycled:1;
 	/* Flag for recycle in PPE DS */
 	__u8			recycled_for_ds:1;
-	/* 1 or 3 bit hole */
+	/* Keep Xiaomi recycler bits fixed when SIT/6rd is enabled. */
+#ifdef CONFIG_IPV6_NDISC_NODETYPE
+	__u8			ndisc_nodetype:2;
+#endif
 
 #ifdef CONFIG_NET_SCHED
 	__u16			tc_index;	/* traffic control index */

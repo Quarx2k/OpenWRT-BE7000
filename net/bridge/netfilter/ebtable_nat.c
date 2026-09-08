@@ -62,14 +62,14 @@ static unsigned int
 ebt_nat_in(void *priv, struct sk_buff *skb,
 	   const struct nf_hook_state *state)
 {
-	return ebt_do_table(skb, state, state->net->xt.frame_nat);
+	return ebt_do_table(skb, state, state->net->ebt.frame_nat);
 }
 
 static unsigned int
 ebt_nat_out(void *priv, struct sk_buff *skb,
 	    const struct nf_hook_state *state)
 {
-	return ebt_do_table(skb, state, state->net->xt.frame_nat);
+	return ebt_do_table(skb, state, state->net->ebt.frame_nat);
 }
 
 static const struct nf_hook_ops ebt_ops_nat[] = {
@@ -96,7 +96,7 @@ static const struct nf_hook_ops ebt_ops_nat[] = {
 static int __net_init frame_nat_net_init(struct net *net)
 {
 	return ebt_register_table(net, &frame_nat, ebt_ops_nat,
-				  &net->xt.frame_nat);
+				  &net->ebt.frame_nat);
 }
 
 static void __net_exit frame_nat_net_pre_exit(struct net *net)
@@ -106,7 +106,7 @@ static void __net_exit frame_nat_net_pre_exit(struct net *net)
 
 static void __net_exit frame_nat_net_exit(struct net *net)
 {
-	ebt_unregister_table(net, net->xt.frame_nat);
+	ebt_unregister_table(net, net->ebt.frame_nat);
 }
 
 static struct pernet_operations frame_nat_net_ops = {

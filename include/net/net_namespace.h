@@ -165,9 +165,6 @@ struct net {
 #ifdef CONFIG_XFRM
 	struct netns_xfrm	xfrm;
 #endif
-#if IS_ENABLED(CONFIG_IP_VS)
-	struct netns_ipvs	*ipvs;
-#endif
 #if IS_ENABLED(CONFIG_MPLS)
 	struct netns_mpls	mpls;
 #endif
@@ -177,10 +174,25 @@ struct net {
 #ifdef CONFIG_XDP_SOCKETS
 	struct netns_xdp	xdp;
 #endif
+	struct sock		*diag_nlsk;
+
+	/* Optional services follow the Xiaomi ABI fields.  In the BE7000
+	 * configuration these fit in the existing tail padding, retaining
+	 * both sizeof(struct net) and the offsets used by vendor WLAN.
+	 */
+#if IS_ENABLED(CONFIG_IP_VS)
+	struct netns_ipvs	*ipvs;
+#endif
 #if IS_ENABLED(CONFIG_CRYPTO_USER)
 	struct sock		*crypto_nlsk;
 #endif
-	struct sock		*diag_nlsk;
+#if IS_ENABLED(CONFIG_BRIDGE_NF_EBTABLES)
+	struct {
+		struct ebt_table *broute_table;
+		struct ebt_table *frame_filter;
+		struct ebt_table *frame_nat;
+	} ebt;
+#endif
 } __randomize_layout;
 
 #include <linux/seq_file_net.h>

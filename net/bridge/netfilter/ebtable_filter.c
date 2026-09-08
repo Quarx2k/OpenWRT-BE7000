@@ -62,14 +62,14 @@ static unsigned int
 ebt_in_hook(void *priv, struct sk_buff *skb,
 	    const struct nf_hook_state *state)
 {
-	return ebt_do_table(skb, state, state->net->xt.frame_filter);
+	return ebt_do_table(skb, state, state->net->ebt.frame_filter);
 }
 
 static unsigned int
 ebt_out_hook(void *priv, struct sk_buff *skb,
 	     const struct nf_hook_state *state)
 {
-	return ebt_do_table(skb, state, state->net->xt.frame_filter);
+	return ebt_do_table(skb, state, state->net->ebt.frame_filter);
 }
 
 static const struct nf_hook_ops ebt_ops_filter[] = {
@@ -96,7 +96,7 @@ static const struct nf_hook_ops ebt_ops_filter[] = {
 static int __net_init frame_filter_net_init(struct net *net)
 {
 	return ebt_register_table(net, &frame_filter, ebt_ops_filter,
-				  &net->xt.frame_filter);
+				  &net->ebt.frame_filter);
 }
 
 static void __net_exit frame_filter_net_pre_exit(struct net *net)
@@ -106,7 +106,7 @@ static void __net_exit frame_filter_net_pre_exit(struct net *net)
 
 static void __net_exit frame_filter_net_exit(struct net *net)
 {
-	ebt_unregister_table(net, net->xt.frame_filter);
+	ebt_unregister_table(net, net->ebt.frame_filter);
 }
 
 static struct pernet_operations frame_filter_net_ops = {
