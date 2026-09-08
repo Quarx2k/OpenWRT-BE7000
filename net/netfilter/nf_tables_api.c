@@ -5743,12 +5743,9 @@ static int nf_tables_flowtable_parse_hook(const struct nft_ctx *ctx,
 	if (err < 0)
 		return err;
 
-	for (i = 0; i < n; i++) {
-		if (flowtable->data.flags & NF_FLOWTABLE_F_HW &&
-		    !dev_array[i]->netdev_ops->ndo_flow_offload) {
-			return -EOPNOTSUPP;
-		}
-	}
+	/* Hardware offload is optional per path; unsupported devices keep
+	 * using the software hooks, as in current OpenWrt flowtables.
+	 */
 
 	ops = kcalloc(n, sizeof(struct nf_hook_ops), GFP_KERNEL);
 	if (!ops)
@@ -5882,16 +5879,21 @@ static int nf_tables_newflowtable(struct net *net, struct sock *nlsk,
 	flowtable->data.type = type;
 	write_pnet(&flowtable->data.ft_net, net);
 
-	err = type->init(&flowtable->data);
-	if (err < 0)
-		goto err3;
-
 	if (nla[NFTA_FLOWTABLE_FLAGS]) {
 		flowtable->data.flags =
 			ntohl(nla_get_be32(nla[NFTA_FLOWTABLE_FLAGS]));
-		if (flowtable->data.flags & ~NF_FLOWTABLE_F_HW)
-			goto err4;
+		/* QSDK already counts software flows in conntrack. */
+		if (flowtable->data.flags & ~(NF_FLOWTABLE_F_HW |
+					      NF_FLOWTABLE_F_COUNTER)) {
+			err = -EINVAL;
+			goto err3;
+		}
 	}
+
+	/* init() needs the hardware flag to take its module reference. */
+	err = type->init(&flowtable->data);
+	if (err < 0)
+		goto err3;
 
 	err = nf_tables_flowtable_parse_hook(&ctx, nla[NFTA_FLOWTABLE_HOOK],
 					     flowtable);

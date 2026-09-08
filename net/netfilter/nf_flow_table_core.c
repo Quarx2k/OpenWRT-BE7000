@@ -549,18 +549,20 @@ int nf_flow_table_init(struct nf_flowtable *flowtable)
 {
 	int err;
 
-	if (flowtable->flags & NF_FLOWTABLE_F_HW) {
-		err = nf_flow_offload_hw_init(flowtable);
-		if (err)
-			return err;
-	}
-
 	INIT_DEFERRABLE_WORK(&flowtable->gc_work, nf_flow_offload_work_gc);
 
 	err = rhashtable_init(&flowtable->rhashtable,
 			      &nf_flow_offload_rhash_params);
 	if (err < 0)
 		return err;
+
+	if (flowtable->flags & NF_FLOWTABLE_F_HW) {
+		err = nf_flow_offload_hw_init(flowtable);
+		if (err) {
+			rhashtable_destroy(&flowtable->rhashtable);
+			return err;
+		}
+	}
 
 	queue_delayed_work(system_power_efficient_wq,
 			   &flowtable->gc_work, HZ);
