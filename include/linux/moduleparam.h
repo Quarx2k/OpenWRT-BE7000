@@ -30,14 +30,10 @@
 #define __MODULE_INFO_STRIP(tag, name, info) __MODULE_INFO(tag, name, info)
 #endif
 
-#ifdef MODULE
 #define __MODULE_INFO(tag, name, info)					  \
 static const char __UNIQUE_ID(name)[]					  \
   __used __attribute__((section(".modinfo"), unused, aligned(1)))	  \
   = __MODULE_INFO_PREFIX __stringify(tag) "=" info
-#else
-#define __MODULE_INFO(tag, name, info) __MODULE_INFO_DISABLED(name)
-#endif
 
 #define __MODULE_PARM_TYPE(name, _type)					  \
   __MODULE_INFO(parmtype, name##type, #name ":" _type)
