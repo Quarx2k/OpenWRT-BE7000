@@ -12,6 +12,7 @@
 
 #include <linux/if.h>
 #include <linux/module.h>
+#include <linux/if_arp.h>
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/slab.h>
@@ -1297,6 +1298,20 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
 		wdev->netdev = dev;
 		/* can only change netns with wiphy */
 		dev->features |= NETIF_F_NETNS_LOCAL;
+
+		if (qcom_he_compat_active(rdev) && dev->type == ARPHRD_ETHER) {
+			netdev_features_t filter = NETIF_F_HW_VLAN_CTAG_FILTER |
+						   NETIF_F_HW_VLAN_STAG_FILTER;
+
+			/* QSDK's VLAN callbacks select a single RX VLAN instead of
+			 * filtering tags. The bridge's default VID 1 would therefore
+			 * tag ordinary WLAN traffic even with vlan_filtering off.
+			 * Keep RX/TX tag offload, but let the bridge filter VLANs.
+			 */
+			dev->features &= ~filter;
+			dev->hw_features &= ~filter;
+			dev->wanted_features &= ~filter;
+		}
 
 		cfg80211_init_wdev(wdev);
 		break;
