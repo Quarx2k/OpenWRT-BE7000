@@ -280,6 +280,10 @@ static const struct iw_ioctl_description standard_event[] = {
 	[IW_EVENT_IDX(IWEVEXPIRED)] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 	},
+	/* Xiaomi/QSDK sends this address event alongside IWEVEXPIRED. */
+	[IW_EVENT_IDX(0x8C0A)] = {
+		.header_type	= IW_HEADER_TYPE_ADDR,
+	},
 	[IW_EVENT_IDX(IWEVGENIE)] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
