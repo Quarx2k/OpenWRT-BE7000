@@ -10,7 +10,8 @@ from sysupgrade import package as package_sysupgrade
 P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from kernel_profiles import PROFILES, render_script
-VERSION='1.0.1'
+from storage import USERDATA_SIZES
+VERSION='1.0.2'
 REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
 KERNEL='50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
@@ -41,6 +42,23 @@ def source(work,name,branch,revision,override):
     head=subprocess.check_output(['git','-c','safe.directory='+str(path),'-C',str(path),'rev-parse','HEAD'],text=True).strip()
     if head!=revision:raise ValueError(f'{name}: expected pinned commit {revision}, got {head}')
     return path
+
+
+def usb_images(work,system,release):
+    user=work/'userdata-root';user.mkdir(exist_ok=True)
+    for name in ['upper','work']:(user/name).mkdir(exist_ok=True)
+    (user/'base-id').write_text((system/'etc/be7000-system-id').read_text())
+    images=[('system',system,512,'be7000-system')]+[
+        ('userdata' if size==2048 else f'userdata-{size}',user,size,'be7000-userdata')
+        for size in USERDATA_SIZES]
+    for name,tree,size,label in images:
+        image=work/(name+'.img')
+        with image.open('wb') as file:file.truncate(size*1024**2)
+        run('mke2fs','-q','-t','ext4','-F','-b','4096','-m','0','-O','^orphan_file,^metadata_csum_seed',
+            '-E','lazy_itable_init=0,lazy_journal_init=0','-L',label,'-d',tree,image)
+        run('e2fsck','-fn',image)
+        with image.open('rb') as src,gzip.open(release/(name+'.img.gz'),'wb',compresslevel=1) as dst:
+            shutil.copyfileobj(src,dst,1024*1024)
 
 def main():
     a=argparse.ArgumentParser(description=__doc__)
@@ -164,19 +182,11 @@ FINAL_CMDLINE="console=''',1)
                               'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if args.runtime_kit else 'source'}
     for target in [kit/'provenance.json',kit/'system/usr/share/be7000/provenance.json',w/'release/provenance.json']:
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(json.dumps(provenance,indent=2)+'\n')
-    user=w/'userdata-root';user.mkdir(exist_ok=True)
-    for d in ['upper','work']:(user/d).mkdir(exist_ok=True)
-    (user/'base-id').write_text((kit/'system/etc/be7000-system-id').read_text())
-    for name,tree,size in [('system',kit/'system',512*1024**2),('userdata',user,2*1024**3)]:
-        image=w/(name+'.img')
-        with image.open('wb') as f:f.truncate(size)
-        run('mke2fs','-q','-t','ext4','-F','-b','4096','-m','0','-O','^orphan_file,^metadata_csum_seed','-E','lazy_itable_init=0,lazy_journal_init=0','-L','be7000-'+name,'-d',tree,image)
-        run('e2fsck','-fn',image)
-        with image.open('rb') as src,gzip.open(w/'release'/(name+'.img.gz'),'wb',compresslevel=1) as dst:shutil.copyfileobj(src,dst,1024*1024)
     release=w/'release'
+    usb_images(w,kit/'system',release)
     (release/'BOOT_CONTROL_V1').write_text('1\n')
     (release/'manifest.json').write_text(json.dumps({'version':VERSION,'kernel_commit':KERNEL,'stock_abi_commit':STOCK,'supported_kernels':list(PROFILES),
-        'runtime':'OpenWrt 25.12.5, QSDK 5.4.164','diagnostic_default':False,'vendor_delivery':'installer-v1',
+        'runtime':'OpenWrt 25.12.5, QSDK 5.4.164','diagnostic_default':False,'vendor_delivery':'installer-v1','userdata_sizes':USERDATA_SIZES,
         'files':{str(f.relative_to(release)):f.stat().st_size for f in release.rglob('*') if f.is_file() and f.name!='manifest.json'}},indent=2))
     with tarfile.open(w/f'BE7000-OpenWrt-{VERSION}.tar.gz','w:gz') as t:
         for f in release.iterdir():t.add(f,arcname=f.name)

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Interactive Windows/Linux USB installer. The original firmware is never flashed."""
-import argparse, base64, getpass, hashlib, ipaddress, json, os, re, shlex, sys, tarfile, tempfile, time
+import argparse, base64, getpass, hashlib, ipaddress, json, os, re, shlex, sys, tarfile, tempfile, time, traceback
 import urllib.request
 from pathlib import Path
 import paramiko
 from devicetree import spin_table
-from storage import ext4_uuid
+from storage import ext4_uuid, USERDATA_SIZES, select_userdata_image
 from wlan import collect as collect_wlan
 from wlan import collect_missing_acceleration
 from autostart import install as install_autostart
 from ui import ask, choose, confirm, say, styled
 from kernel_profiles import render_script, parse_preflight, check_bundle, check_existing
 
-VERSION='1.0.1'
+VERSION='1.0.2'
 RELEASE=f'https://github.com/Quarx2k/OpenWRT-BE7000/releases/download/v{VERSION}/BE7000-OpenWrt-{VERSION}.tar.gz'
 BASE='BE7000-OpenWrt'
 
@@ -169,10 +169,12 @@ def main():
         else:
             available=int(run(client,'df -Pk '+q(mount)).decode().splitlines()[-1].split()[3])*1024
             if action=='replace':available+=int(run(client,'du -sk '+q(target)).split()[0])*1024
+            say('Space for settings and installed packages:')
+            userdata=USERDATA_SIZES[choose('Storage size number',[f'{size} MiB' for size in USERDATA_SIZES])-1]
             swap_sizes=[0,256,512,1024]
             swap_choice=choose('Swap option number',[f'{size} MiB' if size else 'No swap' for size in swap_sizes])
             swap=swap_sizes[swap_choice-1]
-            if available<3*1024**3+swap*1024**2:raise RuntimeError('Insufficient free USB space for system, userdata and swap')
+            if available<(1024+userdata+swap)*1024**2:raise RuntimeError('Insufficient free USB space for the selected sizes')
             if swap:run(client,'command -v mkswap')
             diag=confirm('Reserve diagnostic LAN eth1 + SSH 2222?')
             peer=''
@@ -198,6 +200,7 @@ def main():
                     f=release/name
                     if not f.resolve().is_relative_to(release.resolve()) or f.stat().st_size!=size:
                         raise ValueError('Missing or truncated release file: '+name)
+                select_userdata_image(release,manifest,userdata)
                 (release/'payload/be7000-spin-table.dtb').write_bytes(spin_table(run(client,'cat /sys/firmware/fdt')))
                 device=release/'device';device.mkdir()
                 for rel,size in [('IPQ9574/caldata.bin',131072),('qcn9224/caldata_3.bin',184320)]:
@@ -232,13 +235,19 @@ def main():
                     (logdir/'recreate.txt').write_bytes(remove_installation(client,dev,mount,target))
                 run(client,'umask 077; mkdir '+q(target))
                 say('Uploading images, WLAN files and this router’s calibration…')
-                scp(client,upload,target+'/install.tar.gz')
+                try:scp(client,upload,target+'/install.tar.gz')
+                except TimeoutError as error:
+                    raise RuntimeError('File upload timed out. Check the router connection and USB drive.') from error
+                except EOFError as error:
+                    raise RuntimeError('The connection closed while uploading files.') from error
+                (logdir/'upload.txt').write_text(f'Uploaded {upload.stat().st_size} bytes\n',encoding='ascii')
+                say('Preparing the USB drive. This may take several minutes…')
                 command=(f'cd {q(target)} && tar -xzf install.tar.gz && '
                          'gzip -dc system.img.gz > system.img && gzip -dc userdata.img.gz > userdata.img && '
                          'chmod 700 payload/*.sh payload/kexec && chmod -R go-rwx device && '
                          'mkdir -m 700 device/wlan && tar -xzf device/wlan.tar.gz -C device/wlan && rm device/wlan.tar.gz && '
                          'test "$(wc -c < system.img)" = 536870912 && '
-                         'test "$(wc -c < userdata.img)" = 2147483648 && '
+                         f'test "$(wc -c < userdata.img)" = {userdata*1024**2} && '
                          'rm install.tar.gz system.img.gz userdata.img.gz && ')
                 if swap:
                     command+=f'dd if=/dev/zero of=swap.img bs=1048576 count={swap} && chmod 600 swap.img && mkswap swap.img && '
@@ -248,7 +257,12 @@ def main():
                           'ln -s slots/a current && ln -s current/system.img system.img && '
                           'ln -s current/userdata.img userdata.img && ln -s current/payload payload && '
                           'touch USB_SLOTS_V1 READY && sync')
-                (logdir/'install.txt').write_bytes(run(client,command,240))
+                try:result=run(client,command,1800)
+                except TimeoutError as error:
+                    raise RuntimeError('USB preparation timed out. Check the USB drive before retrying.') from error
+                except EOFError as error:
+                    raise RuntimeError('The connection closed while preparing the USB drive.') from error
+                (logdir/'install.txt').write_bytes(result)
         payload=target+'/payload'
         if args.action=='autostart':
             install_autostart(client,run,scp,here,target,usb_uuid)
@@ -270,6 +284,10 @@ def main():
         else:
             print('Without autostart, normal reboot returns to the original firmware.')
         print('Logs:',logdir)
+    except Exception:
+        (logdir/'error.txt').write_text(traceback.format_exc(),encoding='utf-8')
+        print('Logs:',logdir)
+        raise
     finally:client.close()
 
 if __name__=='__main__':

@@ -1,9 +1,9 @@
-import os, re, struct, subprocess, sys, tempfile, unittest
+import json, os, re, struct, subprocess, sys, tempfile, unittest
 from pathlib import Path
 P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from devicetree import spin_table
-from storage import ext4_uuid
+from storage import ext4_uuid, USERDATA_SIZES, select_userdata_image
 from kernel_profiles import PROFILES, render_script
 
 class Ext4Identity(unittest.TestCase):
@@ -22,6 +22,31 @@ class Ext4Identity(unittest.TestCase):
     def test_missing_uuid_rejected(self):
         data=self.header();data[1128:1144]=bytes(16)
         with self.assertRaises(ValueError):ext4_uuid(data)
+
+class UserdataImages(unittest.TestCase):
+    def test_upload_contains_only_selected_image(self):
+        for size in USERDATA_SIZES:
+            with self.subTest(size=size),tempfile.TemporaryDirectory() as tmp:
+                release=Path(tmp);files={}
+                for value in USERDATA_SIZES:
+                    name='userdata.img.gz' if value==2048 else f'userdata-{value}.img.gz'
+                    data=str(value).encode();(release/name).write_bytes(data);files[name]=len(data)
+                manifest={'files':files}
+                select_userdata_image(release,manifest,size)
+                self.assertEqual((release/'userdata.img.gz').read_bytes(),str(size).encode())
+                self.assertEqual(sorted(p.name for p in release.iterdir()),['manifest.json','userdata.img.gz'])
+                self.assertEqual(manifest['files'],{'userdata.img.gz':len(str(size))})
+                self.assertEqual(json.loads((release/'manifest.json').read_text()),manifest)
+
+    def test_legacy_bundle_keeps_2048_and_rejects_missing_sizes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            release=Path(tmp);(release/'userdata.img.gz').write_bytes(b'legacy')
+            manifest={'files':{'userdata.img.gz':6}}
+            for size in USERDATA_SIZES[:-1]:
+                with self.assertRaisesRegex(ValueError,'updated image archive'):
+                    select_userdata_image(release,manifest,size)
+            select_userdata_image(release,manifest,2048)
+            self.assertEqual((release/'userdata.img.gz').read_bytes(),b'legacy')
 
 def fixture():
     names=b'enable-method\0local-mac-address\0'

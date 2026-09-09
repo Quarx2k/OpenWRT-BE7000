@@ -22,6 +22,7 @@ class UsbUpgrade(unittest.TestCase):
         (self.base/'current').symlink_to('slots/a')
         for name in ['system.img','userdata.img','payload']:(self.base/name).symlink_to('current/'+name)
         for name in ['system.img','userdata.img']:(self.base/'slots/a'/name).write_text('original '+name)
+        with (self.base/'slots/a/userdata.img').open('r+b') as file:file.truncate(32*1024**2)
         for name in ['launch.conf','be7000-spin-table.dtb']:(self.base/'payload'/name).write_text('device '+name)
         (self.base/'device').mkdir();(self.base/'device/calibration').write_text('keep calibration')
         (self.base/'swap.img').write_text('keep swap')
@@ -38,7 +39,7 @@ class UsbUpgrade(unittest.TestCase):
         script=script.replace('/tmp/sysinfo/board_name',str(self.root/'board')).replace('/proc/cmdline',str(self.root/'cmdline'))
         # Keep real host loop/sysfs checks; isolate mountpoints/state/size fixtures.
         script=script.replace('/tmp/be7000-',str(self.root/'be7000-'))
-        script=script.replace('536870912','16777216').replace('2147483648','33554432').replace('3145728','65536')
+        script=script.replace('536870912','16777216').replace('256|512|1024|2048','16|32|64|128')
         script=script.replace("if ! awk '$2==\"/mnt/usb\" {found=1} END {exit !found}' /proc/mounts; then",'if false; then')
         self.script=self.root/'upgrade.sh';self.script.write_text(script)
         self.env={**os.environ,'PATH':str(self.bindir)+':'+os.environ['PATH']}
@@ -74,7 +75,9 @@ class UsbUpgrade(unittest.TestCase):
         self.assertEqual((self.base/'slots/b/payload/launch.conf').read_text(),'device launch.conf')
         result=self.run_upgrade('commit');self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(self.active(),'slots/b')
-        self.assertEqual((self.base/'slots/a/userdata.img').read_text(),'original userdata.img')
+        with (self.base/'slots/a/userdata.img').open('rb') as file:
+            self.assertEqual(file.read(21),b'original userdata.img')
+        self.assertEqual((self.base/'slots/a/userdata.img').stat().st_size,32*1024**2)
         self.assertEqual((self.base/'device/calibration').read_text(),'keep calibration')
         self.assertEqual((self.base/'swap.img').read_text(),'keep swap')
 
@@ -86,6 +89,19 @@ class UsbUpgrade(unittest.TestCase):
         self.stage(backup)
         result=subprocess.run(['debugfs','-R','cat upper/etc/config/network',str(self.base/'slots/b/userdata.img')],capture_output=True)
         self.assertEqual(result.stdout,b'keep my network')
+        self.assertEqual((self.base/'slots/b/userdata.img').stat().st_size,32*1024**2)
+
+    def test_selected_storage_size_survives_update(self):
+        for size in [16,32,64,128]:
+            with self.subTest(size=size):
+                with (self.base/'slots/a/userdata.img').open('r+b') as file:file.truncate(size*1024**2)
+                self.stage()
+                image=self.base/'slots/b/userdata.img'
+                self.assertEqual(image.stat().st_size,size*1024**2)
+                superblock=subprocess.check_output(['dumpe2fs','-h',str(image)],stderr=subprocess.DEVNULL,text=True)
+                self.assertIn('Block count:              '+str(size*256)+'\n',superblock)
+                result=subprocess.run(['debugfs','-R','cat base-id',str(image)],capture_output=True)
+                self.assertEqual(result.stdout,b'new-system\n')
 
     def test_without_backup_overlay_is_clean(self):
         self.stage()

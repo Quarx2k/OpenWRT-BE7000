@@ -42,11 +42,16 @@ layout() {
 check_image() {
     image=$1
     command -v losetup >/dev/null || fail 'The losetup package is required'
+    command -v mke2fs >/dev/null || fail 'The e2fsprogs package is required'
     [ "$(cat /tmp/sysinfo/board_name)" = 'xiaomi,be7000' ] || fail 'Wrong board'
     grep -q 'boot_source=kexec' /proc/cmdline || fail 'Not running the USB OpenWrt system'
     usb_identity
     grep -q "be7000_usb_uuid=$uuid" /proc/cmdline || fail 'Boot USB UUID mismatch'
     layout
+    data_bytes=$(ls -ln "$base/$active/userdata.img" | awk '{print $5}')
+    userdata_mib=$((data_bytes / 1048576))
+    case "$userdata_mib" in 256|512|1024|2048) ;; *) fail 'Unsupported storage size';; esac
+    [ "$data_bytes" -eq "$((userdata_mib * 1048576))" ] || fail 'Invalid userdata image size'
     meta=$(mktemp /tmp/be7000-image.XXXXXX)
     fwtool -q -i "$meta" "$image" || { rm -f "$meta"; fail 'Invalid firmware metadata'; }
     format=$(jsonfilter -i "$meta" -e '@.be7000_format')
@@ -67,7 +72,8 @@ check_image() {
     free=$(df -Pk /mnt/usb | awk 'END {print $4}')
     reclaim=0
     [ ! -d "$base/slots/$next" ] || reclaim=$(du -sk "$base/slots/$next" | awk '{print $1}')
-    [ "$((free + reclaim))" -ge 3145728 ] || fail 'Need 3 GiB for the inactive USB slot'
+    needed=$((536870912 / 1024 + userdata_mib * 1024 + 524288))
+    [ "$((free + reclaim))" -ge "$needed" ] || fail 'Not enough free USB space for this update'
 }
 
 stage() {
@@ -82,12 +88,14 @@ stage() {
     for name in $files; do
         tar -xOf "$image" "$prefix/$name" > "$slot/$name"
     done
-    for name in system userdata; do
-        gzip -dc "$slot/$name.img.gz" > "$slot/$name.img"
-        rm "$slot/$name.img.gz"
-    done
+    gzip -dc "$slot/system.img.gz" > "$slot/system.img"
+    # Keep userdata.img.gz in the archive for older USB upgrade implementations.
+    # This updater creates a fresh overlay at the size of the current installation.
+    rm "$slot/system.img.gz" "$slot/userdata.img.gz"
     [ "$(wc -c < "$slot/system.img")" -eq 536870912 ] || fail 'Invalid system image size'
-    [ "$(wc -c < "$slot/userdata.img")" -eq 2147483648 ] || fail 'Invalid userdata image size'
+    dd if=/dev/zero of="$slot/userdata.img" bs=1048576 count=0 seek="$userdata_mib"
+    mke2fs -q -t ext4 -F -b 4096 -m 0 -O '^orphan_file,^metadata_csum_seed' \
+        -E lazy_itable_init=0,lazy_journal_init=0 -L be7000-userdata "$slot/userdata.img"
     cp "$base/payload/launch.conf" "$slot/payload/launch.conf"
     cp "$base/payload/be7000-spin-table.dtb" "$slot/payload/be7000-spin-table.dtb"
     chmod 700 "$slot/payload/"*.sh "$slot/payload/kexec"
@@ -104,7 +112,8 @@ stage() {
     mount -t ext4 -o ro "$sysloop" /tmp/be7000-upgrade-system
     dataloop=$(losetup -f); losetup "$dataloop" "$slot/userdata.img"
     mount -t ext4 -o rw "$dataloop" /tmp/be7000-upgrade-data
-    [ "$(cat /tmp/be7000-upgrade-system/etc/be7000-system-id)" = "$(cat /tmp/be7000-upgrade-data/base-id)" ] || fail 'Rootfs/overlay identity mismatch'
+    mkdir /tmp/be7000-upgrade-data/upper /tmp/be7000-upgrade-data/work
+    cp /tmp/be7000-upgrade-system/etc/be7000-system-id /tmp/be7000-upgrade-data/base-id
     [ -x /tmp/be7000-upgrade-system/usr/lib/be7000/usb-upgrade.sh ] || fail 'Image lacks USB upgrade support'
     if [ -n "${2:-}" ]; then
         tar -xzf "$2" -C /tmp/be7000-upgrade-data/upper
