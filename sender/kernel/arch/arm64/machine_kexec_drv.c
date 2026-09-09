@@ -17,6 +17,7 @@
 #include "machine_kexec_compat.h"
 #include "idmap.h"
 #include "secondary_park.h"
+#include "../../be7000_source.h"
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Fabian Mastenbroek <mail.fabianm@gmail.com>");
@@ -24,6 +25,7 @@ MODULE_DESCRIPTION("Kexec backport as Kernel Module for ARM64");
 MODULE_VERSION("1.10-be7000-spin-table-handoff");
 MODULE_INFO(be7000_breadcrumb, "4.3");
 MODULE_INFO(be7000_cpu_handoff, "physical-spin-table-v1");
+MODULE_INFO(be7000_source_kernels, BE7000_SOURCE_KERNELS);
 MODULE_INFO(be7000_spin_table,
 	    BE7000_TARGET_SPIN_TABLE);
 

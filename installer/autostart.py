@@ -1,6 +1,7 @@
 """Install the persistent Xiaomi launcher without executing it in this boot."""
 from pathlib import Path
 import re, shlex, tempfile
+from kernel_profiles import render_script
 
 ROOT='/data/BE7000-OpenWrt'
 
@@ -21,7 +22,8 @@ mkdir -p /tmp/be7000-autostart.lock
     with tempfile.TemporaryDirectory(prefix='be7000-autostart-') as tmp:
         tmp=Path(tmp)
         (tmp/'usb.uuid').write_text(usb_uuid+'\n',encoding='ascii',newline='\n')
-        for name,path in [('autostart.sh',here/'autostart.sh'),('hook.sh',here/'autostart-hook.sh'),('usb.uuid',tmp/'usb.uuid')]:
+        (tmp/'autostart.sh').write_text(render_script(here/'autostart.sh'),encoding='utf-8',newline='\n')
+        for name,path in [('autostart.sh',tmp/'autostart.sh'),('hook.sh',here/'autostart-hook.sh'),('usb.uuid',tmp/'usb.uuid')]:
             scp(client,path,ROOT+'/'+name+'.new')
             run(client,f'mv {ROOT}/{name}.new {ROOT}/{name}')
     run(client,f'''set -eu

@@ -12,6 +12,7 @@ KEXEC="$BASE_DIR/kexec"
 IMAGE="$BASE_DIR/Image"
 ARCH_MODULE="$BASE_DIR/kexec_mod_arm64.ko"
 CORE_MODULE="$BASE_DIR/kexec_mod.ko"
+# @BE7000_KERNEL_PROFILE@
 DTB_TEMPLATE="$BASE_DIR/be7000-spin-table.dtb"
 LIVE_DTB="/tmp/be7000-kexec-spin-table.$$.dtb"
 MEM_MIN="0x42000000"
@@ -65,10 +66,7 @@ trap cleanup EXIT HUP INT TERM
 }
 
 [ "$(id -u)" = "0" ] || die "run as root"
-[ "$(uname -m)" = "aarch64" ] || die "this package is only for aarch64"
-[ "$(uname -r)" = "5.4.164" ] || die "kernel must be exactly 5.4.164"
-[ "$(uname -v)" = "#0 SMP PREEMPT Tue Jan 27 03:33:27 2026" ] ||
-	die "v63 requires the audited January 2026 original kernel build"
+be7000_kernel_profile || die "unsupported Xiaomi kernel"
 
 for required in "$KEXEC" "$IMAGE" "$ARCH_MODULE" "$CORE_MODULE" \
 	"$DTB_TEMPLATE" "$BASE_DIR/02-quiesce-stage2.sh" "$BASE_DIR/06-check-layout.sh"; do
@@ -76,6 +74,13 @@ for required in "$KEXEC" "$IMAGE" "$ARCH_MODULE" "$CORE_MODULE" \
 done
 
 command -v strings >/dev/null 2>&1 || die "strings is required"
+for module in "$CORE_MODULE" "$ARCH_MODULE"; do
+	supported=$(strings "$module" | sed -n 's/^be7000_source_kernels=//p')
+	case ",$supported," in
+		*,"$KERNEL_PROFILE",*) ;;
+		*) die "This image does not support the router kernel. Use the latest release.";;
+	esac
+done
 [ "$(wc -c < "$IMAGE")" = "$EXPECTED_IMAGE_BYTES" ] ||
 	die "Image has an unexpected size"
 
@@ -127,8 +132,6 @@ grep -q ' [Tt] freeze_processes$' /proc/kallsyms 2>/dev/null ||
 	die "original kernel does not expose freeze_processes through kallsyms"
 grep -q ' [Tt] smp_call_function_single$' /proc/kallsyms 2>/dev/null ||
 	die "original kernel does not expose smp_call_function_single"
-grep -q '^ffffffc0107f61a4 T secondary_holding_pen$' /proc/kallsyms 2>/dev/null ||
-	die "original secondary_holding_pen does not match the January 2026 sender ABI"
 for KSYM in pci_get_device pci_clear_master \
 	pci_wait_for_pending_transaction pci_read_config_word; do
 	grep -q " [Tt] ${KSYM}$" /proc/kallsyms 2>/dev/null ||
@@ -180,6 +183,7 @@ if {
 	echo "time: $(date -Iseconds 2>/dev/null || date)"
 	echo "build: $BUILD_TAG"
 	echo "kernel: $(uname -a)"
+	echo "source_kernel_profile: $KERNEL_PROFILE"
 	echo "root: $ROOT_MOUNT"
 	echo "cmdline: $FINAL_CMDLINE"
 	echo "spin_table_dtb_bytes: $(wc -c < "$LIVE_DTB")"
@@ -213,6 +217,7 @@ EXPECTED_PURGATORY=$2
 {
 	echo "loaded_at=$STAMP"
 	echo "build=$BUILD_TAG"
+	echo "source_kernel_profile=$KERNEL_PROFILE"
 	echo "target=qsdk-initramfs-owrt12"
 	echo "purgatory_checks=disabled"
 	echo "breadcrumb=0x4fb3f000:v4.3:no-devmem-read"

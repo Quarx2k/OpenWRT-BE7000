@@ -4,6 +4,7 @@ P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from devicetree import spin_table
 from storage import ext4_uuid
+from kernel_profiles import PROFILES, render_script
 
 class Ext4Identity(unittest.TestCase):
     def header(self):
@@ -66,7 +67,7 @@ class StockGate(unittest.TestCase):
         for name,body in {'id':'echo 0','uname':'''case "$1" in
 -m) echo aarch64;; -r) echo 5.4.164;; -v) echo "${TEST_KERNEL:-#0 SMP PREEMPT Tue Jan 27 03:33:27 2026}";; esac'''} .items():
             f=self.bin/name;f.write_text('#!/bin/sh\n'+body+'\n');f.chmod(0o755)
-        script=(P/'installer/preflight.sh').read_text()
+        script=render_script(P/'installer/preflight.sh')
         script=re.sub(r'/(proc|sys|tmp)/',lambda m:str(self.root)+m.group(),script)
         self.script=self.root/'check.sh';self.script.write_text(script)
     def tearDown(self):self.temp.cleanup()
@@ -74,6 +75,13 @@ class StockGate(unittest.TestCase):
         env={**os.environ,'PATH':str(self.bin)+':'+os.environ['PATH'],**extra}
         return subprocess.run(['sh',str(self.script)],env=env,capture_output=True).returncode
     def test_supported_stock_passes(self):self.assertEqual(self.check(),0)
+    def test_january_2024_kernel_passes(self):
+        (self.root/'proc/kallsyms').write_text(PROFILES['20240122']['pen']+' T secondary_holding_pen\n')
+        self.assertEqual(self.check(TEST_KERNEL=PROFILES['20240122']['build']),0)
+    def test_known_date_with_other_known_layout_rejected(self):
+        self.assertNotEqual(self.check(TEST_KERNEL=PROFILES['20240122']['build']),0)
+        (self.root/'proc/kallsyms').write_text(PROFILES['20240122']['pen']+' T secondary_holding_pen\n')
+        self.assertNotEqual(self.check(),0)
     def test_other_firmware_slot_passes(self):
         (self.root/'proc/mounts').write_text('/dev/mtdblock33 / squashfs ro 0 0\n')
         (self.root/'proc/cmdline').write_text('ubi.mtd=rootfs_1 root=mtd:ubi_rootfs_1 rootfstype=squashfs ')

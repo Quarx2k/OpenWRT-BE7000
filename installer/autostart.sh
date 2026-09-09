@@ -14,8 +14,9 @@ mkdir /tmp/be7000-autostart.lock 2>/dev/null || exit 0
 set -eu
 say() { echo "BE7000 autostart: $*"; }
 skip() { say "$*; staying in Xiaomi"; exit 0; }
-[ "$(uname -r)" = '5.4.164' ] &&
-[ "$(uname -v)" = '#0 SMP PREEMPT Tue Jan 27 03:33:27 2026' ] || skip 'Unsupported kernel'
+# @BE7000_KERNEL_PROFILE@
+be7000_kernel_profile || skip 'Unsupported kernel'
+say "Selected Xiaomi $KERNEL_FIRMWARE kernel profile"
 uuid=$(cat /data/BE7000-OpenWrt/usb.uuid)
 case "$uuid" in ''|*[!0-9a-f-]*) skip 'Invalid USB UUID';; esac
 [ "${#uuid}" = 36 ] || skip 'Invalid USB UUID'

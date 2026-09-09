@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Build OpenWrt, QSDK kernel, runtime and clean USB images on Linux."""
 from pathlib import Path
-import argparse, subprocess, shutil, tarfile, gzip, os, stat, re, json, urllib.request
+import argparse, subprocess, shutil, tarfile, gzip, os, stat, re, json, urllib.request, sys
 from build_runtime import bootstrap
 from build_kmods import package as package_kmods
 from build_version import stamp
 from sysupgrade import package as package_sysupgrade
 
 P=Path(__file__).resolve().parents[1]
-VERSION='1.0.0'
+sys.path.insert(0,str(P/'installer'))
+from kernel_profiles import PROFILES, render_script
+VERSION='1.0.1'
 REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
 KERNEL='50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
@@ -114,7 +116,7 @@ def main():
     for name in ['Image','System.map']:
         shutil.copy2(b/('arch/arm64/boot/Image' if name=='Image' else name),payload/name)
     sender=w/'sender'
-    if not sender.exists():shutil.copytree(P/'sender',sender)
+    shutil.copytree(P/'sender',sender,dirs_exist_ok=True)
     run('python3',P/'tools/generate-handoff-target.py',payload,sender)
     sb=w/'stock-build-r5';sb.mkdir(exist_ok=True)
     if not (sb/'.config').exists():shutil.copy2(P/'configs/stock-sender.config',sb/'.config')
@@ -123,6 +125,9 @@ def main():
     run(*stockargs,'M='+str(sender/'kernel'),'-j'+str(args.j),'modules')
     shutil.copy2(sender/'kernel/kexec_mod.ko',payload/'kexec_mod.ko')
     shutil.copy2(sender/'kernel/arch/arm64/kexec_mod_arm64.ko',payload/'kexec_mod_arm64.ko')
+    for name in ['kexec_mod.ko','kexec_mod_arm64.ko']:
+        if ('be7000_source_kernels='+','.join(PROFILES)+'\0').encode() not in (payload/name).read_bytes():
+            raise ValueError('Sender does not match the installer kernel profiles: '+name)
     if not args.runtime_kit:
         cfg=w/'cfg80211'
         shutil.copytree(k/'net/wireless',cfg,dirs_exist_ok=True)
@@ -142,7 +147,7 @@ def main():
     shutil.copy2(kit/'payload/kexec',payload/'kexec');(payload/'kexec').chmod(0o755)
     layout=json.loads((payload/'target-layout.json').read_text())
     for f in (P/'installer').glob('*.sh'):
-        data=f.read_text()
+        data=render_script(f)
         data=data.replace('30822408',str(layout['image_bytes'])).replace('31272960',str(layout['kernel_memsz'])).replace('427321a4',f"{layout['holding_pen']:x}")
         if f.name=='01-load-only.sh':
             needle='FINAL_CMDLINE="console='
@@ -155,7 +160,8 @@ FINAL_CMDLINE="console=''',1)
             data=data.replace('be7000_source=owrt12"','be7000_source=owrt12 be7000_usb_uuid=$USB_UUID be7000_diagnostic=$DIAGNOSTIC"',1)
         dest=payload/f.name;dest.write_text(data);dest.chmod(0o755);run('sh','-n',dest)
     provenance=json.loads((kit/'provenance.json').read_text()) if (kit/'provenance.json').exists() else {'runtime':'prebuilt input; original build provenance is unavailable'}
-    provenance['this_build']={'kernel':KERNEL,'sender_abi':STOCK,'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if args.runtime_kit else 'source'}
+    provenance['this_build']={'kernel':KERNEL,'sender_abi':STOCK,'supported_kernels':PROFILES,
+                              'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if args.runtime_kit else 'source'}
     for target in [kit/'provenance.json',kit/'system/usr/share/be7000/provenance.json',w/'release/provenance.json']:
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(json.dumps(provenance,indent=2)+'\n')
     user=w/'userdata-root';user.mkdir(exist_ok=True)
@@ -169,7 +175,7 @@ FINAL_CMDLINE="console=''',1)
         with image.open('rb') as src,gzip.open(w/'release'/(name+'.img.gz'),'wb',compresslevel=1) as dst:shutil.copyfileobj(src,dst,1024*1024)
     release=w/'release'
     (release/'BOOT_CONTROL_V1').write_text('1\n')
-    (release/'manifest.json').write_text(json.dumps({'version':VERSION,'kernel_commit':KERNEL,'stock_abi_commit':STOCK,
+    (release/'manifest.json').write_text(json.dumps({'version':VERSION,'kernel_commit':KERNEL,'stock_abi_commit':STOCK,'supported_kernels':list(PROFILES),
         'runtime':'OpenWrt 25.12.5, QSDK 5.4.164','diagnostic_default':False,'vendor_delivery':'installer-v1',
         'files':{str(f.relative_to(release)):f.stat().st_size for f in release.rglob('*') if f.is_file() and f.name!='manifest.json'}},indent=2))
     with tarfile.open(w/f'BE7000-OpenWrt-{VERSION}.tar.gz','w:gz') as t:

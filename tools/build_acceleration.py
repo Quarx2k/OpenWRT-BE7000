@@ -17,7 +17,7 @@ def build(work, kernel, common, symbols, includes, checkout, run):
     def module(path, options=()):
         tree=work/path
         extra=' -DNSS_CAPWAPMGR_ONE_NETDEV' if path=='ppe/clients/capwapmgr' else ''
-        run(*common,'M='+str(tree),'SoC=ipq95xx','BUILD_ID=\\\"be7000-1.0.0\\\"',
+        run(*common,'M='+str(tree),'SoC=ipq95xx','BUILD_ID=\\\"be7000-1.0.1\\\"',
             'EXTRA_CFLAGS='+flags+extra,'KBUILD_EXTRA_SYMBOLS='+' '.join(map(str,symbols)),*options,'modules')
         symbols.append(tree/'Module.symvers')
         built.extend(Path(line) for line in (tree/'modules.order').read_text().splitlines())

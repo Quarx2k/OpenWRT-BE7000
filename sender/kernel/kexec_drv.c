@@ -24,6 +24,7 @@
 #include "kexec_compat.h"
 #include "kexec_breadcrumb.h"
 #include "kexec.h"
+#include "be7000_source.h"
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Fabian Mastenbroek <mail.fabianm@gmail.com>");
@@ -32,6 +33,7 @@ MODULE_VERSION("1.10-be7000-spin-table-handoff");
 MODULE_INFO(be7000_rpm_glink, "serialized-handoff-v1");
 MODULE_INFO(be7000_device_abi, "stock-driver-data-120");
 MODULE_INFO(be7000_cpu_quiesce, "physical-spin-table-v1");
+MODULE_INFO(be7000_source_kernels, BE7000_SOURCE_KERNELS);
 
 static ssize_t kexecmod_loaded_show(struct kobject *kobj,
 		  		    struct kobj_attribute *attr, char *buf)

@@ -10,9 +10,10 @@ from wlan import collect as collect_wlan
 from wlan import collect_missing_acceleration
 from autostart import install as install_autostart
 from ui import ask, choose, confirm, say, styled
+from kernel_profiles import render_script, parse_preflight, check_bundle, check_existing
 
-VERSION='1.0.0'
-RELEASE=f'https://github.com/Quarx2k/OpenWRT-BE7000/releases/download/{VERSION}/BE7000-OpenWrt-{VERSION}.tar.gz'
+VERSION='1.0.1'
+RELEASE=f'https://github.com/Quarx2k/OpenWRT-BE7000/releases/download/v{VERSION}/BE7000-OpenWrt-{VERSION}.tar.gz'
 BASE='BE7000-OpenWrt'
 
 def local_bundle():
@@ -117,7 +118,7 @@ def main():
     parser.add_argument('--preflight-only',action='store_true')
     parser.add_argument('--boot-existing',action='store_true')
     args=parser.parse_args()
-    say('Xiaomi BE7000-OpenWrt by Quarx2k - USB boot, requires Xiaomi firmware with the January 2026 kernel')
+    say('Xiaomi BE7000-OpenWrt by Quarx2k - USB boot, Xiaomi 1.1.16 / 1.1.38 kernels')
     host=args.host or ask('Router IP [192.168.32.1]: ').strip() or '192.168.32.1'
     ipaddress.ip_address(host)
     client=connect_router(host,args.port,getpass.getpass(styled('Router SSH password: ')))
@@ -126,10 +127,12 @@ def main():
     try:
         # Execute a reviewed read-only script over stdin, without creating a remote file.
         inp,out,err=client.exec_command('sh -s',timeout=20)
-        inp.write((here/'preflight.sh').read_text());inp.channel.shutdown_write()
+        inp.write(render_script(here/'preflight.sh'));inp.channel.shutdown_write()
         report=out.read()+err.read();(logdir/'preflight.txt').write_bytes(report)
         if out.channel.recv_exit_status():raise RuntimeError(report.decode(errors='replace'))
-        say(report.decode().strip(),'success')
+        kernel_profile,message=parse_preflight(report)
+        say(message.strip(),'success')
+        (logdir/'kernel-profile.txt').write_text(kernel_profile+'\n',encoding='ascii')
         if args.preflight_only:return
         if args.action=='boot':
             mode=choose('Boot mode number',['Boot once','Enable automatic startup and boot now'])
@@ -160,6 +163,7 @@ def main():
             run(client,f'test -f {q(target+"/READY")} && test -f {q(target+"/payload/launch.conf")} && '
                 f'test -s {q(target+"/system.img")} && test -s {q(target+"/userdata.img")} || '
                 '{ echo "Installation is incomplete. Run again and choose Recreate." >&2; exit 1; }')
+            check_existing(client,run,target,kernel_profile)
             if args.action=='autostart' and not confirm('Enable automatic USB startup and boot OpenWrt now?'):return
             collect_missing_acceleration(client,run,target)
         else:
@@ -188,7 +192,8 @@ def main():
                     t.extractall(temp/'release',filter='data')
                 release=temp/'release';manifest=json.loads((release/'manifest.json').read_text())
                 if manifest['version']!=VERSION:raise ValueError('Installer/release version mismatch')
-                if manifest.get('vendor_delivery')!='installer-v1':raise ValueError('Use the updated 1.0.0 bundle with installer-provided WLAN')
+                if manifest.get('vendor_delivery')!='installer-v1':raise ValueError('Use the latest release archive.')
+                check_bundle(manifest,kernel_profile)
                 for name,size in manifest['files'].items():
                     f=release/name
                     if not f.resolve().is_relative_to(release.resolve()) or f.stat().st_size!=size:

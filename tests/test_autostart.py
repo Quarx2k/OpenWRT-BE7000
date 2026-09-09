@@ -7,6 +7,7 @@ P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from autostart import install
 import install as installer
+from kernel_profiles import PROFILES, render_script
 
 class InstallerTransition(unittest.TestCase):
     def setUp(self):
@@ -17,7 +18,7 @@ class InstallerTransition(unittest.TestCase):
         self.enterContext(patch.object(installer.getpass,'getpass',return_value=''))
         self.client=MagicMock()
         inp,out,err=MagicMock(),MagicMock(),MagicMock()
-        out.read.return_value=b'Compatible';err.read.return_value=b''
+        out.read.return_value=b'BE7000_KERNEL_PROFILE=20260127\nCompatible\n';err.read.return_value=b''
         out.channel.recv_exit_status.return_value=0
         self.client.exec_command.return_value=(inp,out,err)
         self.enterContext(patch.object(installer,'connect_router',return_value=self.client))
@@ -29,6 +30,7 @@ class InstallerTransition(unittest.TestCase):
             self.events.append(command)
             if command=='cat /proc/mounts':return b'/dev/sda1 /mnt/usb-test ext4 rw 0 0\n'
             if command.startswith('readlink'):return b'/sys/devices/usb1/block/sda1\n'
+            if 'be7000_source_kernels=' in command:return b'20240122,20260127\n'
             return b''
         self.enterContext(patch.object(installer,'run',side_effect=run))
         self.setup_hook=self.enterContext(patch.object(installer,'install_autostart',side_effect=lambda *args:self.events.append('hook installed')))
@@ -47,6 +49,13 @@ class InstallerTransition(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'Install failed'):installer.main()
         self.assertFalse(any('01-load-only' in command or '02-execute' in command for command in self.events))
         self.client.close.assert_called_once()
+
+    def test_2024_profile_uses_same_install_and_boot_path(self):
+        self.client.exec_command.return_value[1].read.return_value=b'BE7000_KERNEL_PROFILE=20240122\nCompatible\n'
+        installer.main()
+        self.setup_hook.assert_called_once()
+        self.assertIn('sh 01-load-only.sh LOAD-OWRT12-CANDIDATE',self.events[-3])
+        self.assertIn('sh 02-execute.sh EXECUTE-KEXEC-QUIESCED',self.events[-1])
 
     def test_cancel_does_not_install_or_load_kernel(self):
         self.confirm.return_value=False
@@ -80,9 +89,9 @@ class Autostart(unittest.TestCase):
         (self.root/'bin/nohup').unlink(missing_ok=True)
         for name in ['sleep','sync','logger']:
             self.script('bin/'+name,'exit 0')
-        self.script('bin/uname','case "$1" in -r) echo 5.4.164;; -v) echo "#0 SMP PREEMPT Tue Jan 27 03:33:27 2026";; esac')
+        self.set_kernel('20260127')
         self.write('data/BE7000-OpenWrt/usb.uuid','00112233-4455-6677-8899-aabbccddeeff\n')
-        shutil.copy2(P/'installer/autostart.sh',self.root/'data/BE7000-OpenWrt/autostart.sh')
+        self.write('data/BE7000-OpenWrt/autostart.sh',render_script(P/'installer/autostart.sh'))
         self.write('tmp/boot_check_done','boot_done\n')
         self.write('proc/xiaoqiang/boot_status','3\n')
         self.write('sys/kernel/kexec_loaded','0\n')
@@ -108,6 +117,10 @@ class Autostart(unittest.TestCase):
         p=self.root/name
         if p.is_symlink():p.unlink()
         self.write(name,'#!/bin/sh\n'+text+'\n').chmod(0o755)
+    def set_kernel(self,profile):
+        p=PROFILES[profile]
+        self.script('bin/uname',f'case "$1" in -m) echo aarch64;; -r) echo 5.4.164;; -v) echo "{p["build"]}";; esac')
+        self.write('proc/kallsyms',p['pen']+' T secondary_holding_pen\n')
     def run_sh(self,*args):
         return subprocess.run(['chroot',str(self.root),'/bin/sh',*args],env={**os.environ,'PATH':'/bin:/usr/sbin'},text=True,capture_output=True)
     def boot(self):return self.run_sh('/data/BE7000-OpenWrt/autostart.sh','run')
@@ -126,6 +139,17 @@ class Autostart(unittest.TestCase):
     def test_firewall_restart_does_not_retry(self):
         self.boot();self.boot()
         self.assertEqual(self.calls().count('executed'),1)
+
+    def test_detects_kernel_again_after_firmware_change(self):
+        self.boot();self.reboot();self.set_kernel('20240122')
+        self.assertIn('1.1.16',self.boot().stdout)
+        self.assertEqual(self.calls().count('executed'),2)
+
+    def test_wrong_kernel_layout_does_not_consume_attempt(self):
+        self.write('proc/kallsyms',PROFILES['20240122']['pen']+' T secondary_holding_pen\n')
+        self.assertIn('Unsupported kernel',self.boot().stdout)
+        self.assertEqual(self.calls(),'')
+        self.assertFalse((self.state/'boot-pending').exists())
 
     def test_detached_hook_without_nohup(self):
         (self.root/'bin/nohup').unlink(missing_ok=True)

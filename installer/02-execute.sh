@@ -7,6 +7,7 @@ BUILD_TAG="be7000-kexec-v63-owrt-v12-ram"
 SELF_DIR=${0%/*}
 [ "$SELF_DIR" = "$0" ] && SELF_DIR=.
 BASE_DIR=$(CDPATH= cd "$SELF_DIR" 2>/dev/null && pwd)
+# @BE7000_KERNEL_PROFILE@
 
 TMP_KEXEC="/tmp/be7000-kexec-quiesce.bin"
 TMP_STAGE2="/tmp/be7000-kexec-quiesce-stage2.sh"
@@ -41,14 +42,15 @@ trap cleanup EXIT HUP INT TERM
 }
 
 [ "$(id -u)" = "0" ] || die "run as root"
-[ "$(uname -v)" = "#0 SMP PREEMPT Tue Jan 27 03:33:27 2026" ] ||
-	die "v63 requires the audited January 2026 original kernel build"
+be7000_kernel_profile || die "unsupported Xiaomi kernel"
 [ -c /dev/kexec ] || die "/dev/kexec is absent"
 [ -r /sys/kernel/kexec_loaded ] || die "kexec state is unavailable"
 [ "$(cat /sys/kernel/kexec_loaded)" = "1" ] || die "no kernel image is loaded"
 grep -q '^kexec_mod_arm64 ' /proc/modules || die "architecture module is not loaded"
 grep -q '^kexec_mod ' /proc/modules || die "core module is not loaded"
 [ -r "$BASE_DIR/loaded-state.txt" ] || die "load record is absent"
+grep -qx "source_kernel_profile=$KERNEL_PROFILE" "$BASE_DIR/loaded-state.txt" ||
+	die "The loaded image does not match the router kernel. Run the installer again."
 grep -q "^build=$BUILD_TAG$" "$BASE_DIR/loaded-state.txt" || die "wrong module build was loaded"
 grep -q '^target=qsdk-initramfs-owrt12$' "$BASE_DIR/loaded-state.txt" ||
 	die "loaded target is not the owrt12 RAM system"

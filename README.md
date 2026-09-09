@@ -21,17 +21,18 @@
 
 ## Install
 
-You need root SSH access and an **ext4 USB drive with at least 3 GiB free**, plus space for swap if you want it. The drive must be connected to the router and mounted by Xiaomi. Supported Xiaomi kernel:
+You need root SSH access and an **ext4 USB drive with at least 3 GiB free**, plus space for swap if you want it. The drive must be connected to the router and mounted by Xiaomi. The installer automatically recognizes these Xiaomi kernels:
 
-```text
-5.4.164 #0 SMP PREEMPT Tue Jan 27 03:33:27 2026
-```
+| Xiaomi firmware | Linux 5.4.164 build |
+| --- | --- |
+| 1.1.16 | 22 January 2024 |
+| 1.1.38 | 27 January 2026 |
 
 - **Windows:** extract the ZIP and run `BE7000-OpenWrt-Setup.exe`. Keep the image `.tar.gz` next to the EXE. No Python installation needed.
 - **Linux:** extract the archive and run the command below. You need Python 3.12+, `python3-venv` and Internet access to install dependencies.
 
 ```sh
-./install.sh --bundle ./BE7000-OpenWrt-1.0.0.tar.gz
+./install.sh --bundle ./BE7000-OpenWrt-1.0.1.tar.gz
 ```
 
 OpenWrt files and settings live in `/BE7000-OpenWrt` on the USB drive. Leave it connected while OpenWrt is running.
@@ -72,7 +73,7 @@ A boot is confirmed once LAN and management services have been up for 30 seconds
 
 ## Update
 
-Open **LuCI → System → Backup / Flash Firmware** and select `BE7000-OpenWrt-1.0.0-sysupgrade.bin`.
+Open **LuCI → System → Backup / Flash Firmware** and select `BE7000-OpenWrt-1.0.1-sysupgrade.bin`.
 
 You can keep or reset your settings. You'll need to reinstall any packages you added yourself. Calibration, Wi-Fi files and swap are kept either way.
 
@@ -301,9 +302,9 @@ Build output:
 
 | File | Purpose |
 | --- | --- |
-| `BE7000-OpenWrt-1.0.0.tar.gz` | Image for the installer |
-| `BE7000-OpenWrt-1.0.0-sysupgrade.bin` | Update through LuCI |
-| `BE7000-runtime-1.0.0.tar.gz` | Prebuilt components for reuse with `--runtime-kit` |
+| `BE7000-OpenWrt-1.0.1.tar.gz` | Image for the installer |
+| `BE7000-OpenWrt-1.0.1-sysupgrade.bin` | Update through LuCI |
+| `BE7000-runtime-1.0.1.tar.gz` | Prebuilt components for reuse with `--runtime-kit` |
 
 Windows installer build (Python 3.12):
 

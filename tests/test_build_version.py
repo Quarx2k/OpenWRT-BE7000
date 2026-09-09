@@ -11,7 +11,7 @@ class BuildVersion(unittest.TestCase):
             (root/'etc/openwrt_release').write_text("DISTRIB_DESCRIPTION='OpenWrt 25.12.5 / BE7000 by Quarx2k'\n")
             (root/'usr/lib/os-release').write_text('OPENWRT_RELEASE="OpenWrt 25.12.5 / BE7000 by Quarx2k"\n')
             (root/'etc/os-release').symlink_to('../usr/lib/os-release')
-            for version in ['v1.0.0','v1.0.0-1-g1234567','v1.0.0-1-g1234567-dirty']:
+            for version in ['v1.0.0','v1.0.1','v1.0.1-1-g1234567','v1.0.1-1-g1234567-dirty']:
                 with patch('build_version.revision',return_value=version):
                     stamp(root,root);stamp(root,root)
                 for name in ['etc/openwrt_release','etc/os-release']:
