@@ -15,6 +15,18 @@ from kernel_profiles import render_script, parse_preflight, check_bundle, check_
 VERSION='1.0.2'
 RELEASE=f'https://github.com/Quarx2k/OpenWRT-BE7000/releases/download/v{VERSION}/BE7000-OpenWrt-{VERSION}.tar.gz'
 BASE='BE7000-OpenWrt'
+DEVICE_CHECK='[ -c /dev/kexec ] || die "/dev/kexec was not created"'
+DEVICE_WAIT='''# Wait for Xiaomi hotplug to create /dev/kexec.
+waited=0
+while [ ! -c /dev/kexec ] && [ "$waited" -lt 30 ]; do
+\tsleep 1
+\twaited=$((waited + 1))
+done
+'''
+LEGACY_CRASH_CHECK='''CRASH_UPLOAD=$(uci -q get miwifi.server.LOG 2>/dev/null || true)
+[ "$CRASH_UPLOAD" = "127.0.0.1:9" ] ||
+\tdie "crash-log retention stub is not armed (miwifi.server.LOG=${CRASH_UPLOAD:-unset})"
+'''
 
 def local_bundle():
     frozen=getattr(sys,'frozen',False)
@@ -40,6 +52,26 @@ def scp(client, file, target):
     with file.open('rb') as f:
         while block:=f.read(128*1024):channel.sendall(block)
     channel.sendall(b'\0');ack();channel.close()
+
+def update_boot_scripts(client,payload):
+    # Patch installed scripts without replacing their generated kernel layout.
+    for name in ['01-load-only.sh','02-execute.sh']:
+        path=payload+'/'+name
+        script=run(client,'cat '+shlex.quote(path)).decode()
+        if name=='01-load-only.sh':
+            if DEVICE_WAIT in script:continue
+            if script.count(DEVICE_CHECK)!=1:
+                raise RuntimeError('The saved loader could not be updated. Use the matching image archive.')
+            updated=script.replace(DEVICE_CHECK,DEVICE_WAIT+DEVICE_CHECK)
+        else:
+            updated=script.replace(LEGACY_CRASH_CHECK,'')
+            if updated==script:continue
+        with tempfile.TemporaryDirectory() as temp:
+            local=Path(temp)/name
+            local.write_bytes(updated.encode())
+            pending=path+'.new'
+            scp(client,local,pending)
+            run(client,f'sh -n {shlex.quote(pending)} && chmod 700 {shlex.quote(pending)} && mv -f {shlex.quote(pending)} {shlex.quote(path)}')
 
 def fingerprint(key):
     return 'SHA256:'+base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip('=')
@@ -264,6 +296,7 @@ def main():
                     raise RuntimeError('The connection closed while preparing the USB drive.') from error
                 (logdir/'install.txt').write_bytes(result)
         payload=target+'/payload'
+        update_boot_scripts(client,payload)
         if args.action=='autostart':
             install_autostart(client,run,scp,here,target,usb_uuid)
             say('Autostart enabled (three attempts).','success')
@@ -271,7 +304,15 @@ def main():
         if args.action=='prepare':
             say('Prepared. Run again with --boot-existing to boot.','success');return
         say('Loading the kernel into RAM…')
-        (logdir/'load.txt').write_bytes(run(client,f'cd {q(payload)} && sh 01-load-only.sh LOAD-OWRT12-CANDIDATE',120))
+        try:
+            loaded=run(client,f'cd {q(payload)} && sh 01-load-only.sh LOAD-OWRT12-CANDIDATE',120)
+        except Exception:
+            for name,command in [('dmesg.txt','dmesg'),('load-state.txt',
+                'cat /proc/modules; cat /proc/mounts; ls -l /dev/kexec /sys/class/kexec/kexec/dev /sys/kernel/kexec_loaded')]:
+                try:(logdir/name).write_bytes(run(client,command+'; true',15))
+                except Exception:pass
+            raise
+        (logdir/'load.txt').write_bytes(loaded)
         (logdir/'load-logs.tar').write_bytes(run(client,f'tar -cf - -C {q(payload)} logs loaded-state.txt'))
         if args.action=='load':
             say('Loaded only; no transition. Use payload/03-cancel.sh on the router to cancel.','success');return

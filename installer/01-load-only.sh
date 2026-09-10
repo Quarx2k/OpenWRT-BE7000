@@ -164,6 +164,12 @@ LOADED_CORE=1
 # initialization already means kexec_breadcrumb_init() completed; format v4.3
 # is verified from signed-in-package module metadata above.
 
+# Wait for Xiaomi hotplug to create /dev/kexec.
+waited=0
+while [ ! -c /dev/kexec ] && [ "$waited" -lt 30 ]; do
+	sleep 1
+	waited=$((waited + 1))
+done
 [ -c /dev/kexec ] || die "/dev/kexec was not created"
 [ -r /sys/kernel/kexec_loaded ] || die "/sys/kernel/kexec_loaded was not created"
 [ "$(cat /sys/kernel/kexec_loaded)" = "0" ] || die "unexpected kexec_loaded state"

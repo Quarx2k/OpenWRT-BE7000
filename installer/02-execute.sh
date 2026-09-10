@@ -136,9 +136,6 @@ command -v rmmod >/dev/null 2>&1 || die "rmmod is unavailable"
 	die "ubus is unavailable"
 [ -x "$BASE_DIR/02-quiesce-stage2.sh" ] || die "stage-2 script is absent"
 [ -w /data/usr/log ] || die "/data/usr/log is not writable"
-CRASH_UPLOAD=$(uci -q get miwifi.server.LOG 2>/dev/null || true)
-[ "$CRASH_UPLOAD" = "127.0.0.1:9" ] ||
-	die "crash-log retention stub is not armed (miwifi.server.LOG=${CRASH_UPLOAD:-unset})"
 WATCHDOG_STATE=$(ubus call system watchdog '{}' 2>/dev/null || true)
 echo "$WATCHDOG_STATE" | grep -q '"status":[[:space:]]*"running"' ||
 	die "hardware watchdog is not running; refusing a transition without recovery"

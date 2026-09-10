@@ -290,12 +290,12 @@ Build on Ubuntu 24.04 x86_64, either natively or in WSL. Keep the build director
 
 ```sh
 sudo apt-get install build-essential git python3 python3-venv bc bison flex libssl-dev libelf-dev libncurses-dev device-tree-compiler e2fsprogs xz-utils zstd unzip rsync gawk gettext wget file gcc-aarch64-linux-gnu qemu-user-static kmod openssl
-git clone git@github.com:Quarx2k/OpenWRT-BE7000.git
+git clone https://github.com/Quarx2k/OpenWRT-BE7000.git
 cd OpenWRT-BE7000
 mkdir -p "$HOME/be7000-build"
-git clone -b kernel-qsdk-12.1-r5 --single-branch git@github.com:Quarx2k/OpenWRT-BE7000.git "$HOME/be7000-build/linux"
-git clone -b stock-abi-qsdk-12.1-r5-20260127 --single-branch git@github.com:Quarx2k/OpenWRT-BE7000.git "$HOME/be7000-build/sender-linux"
-sudo ./build.sh --work "$HOME/be7000-build" --kernel-dir "$HOME/be7000-build/linux" --stock-dir "$HOME/be7000-build/sender-linux" -j 16
+git clone -b kernel-qsdk-12.1-r5 --single-branch https://github.com/Quarx2k/OpenWRT-BE7000.git "$HOME/be7000-build/linux"
+git clone -b stock-abi-qsdk-12.1-r5-20260127 --single-branch https://github.com/Quarx2k/OpenWRT-BE7000.git "$HOME/be7000-build/sender-linux"
+sudo ./build.sh --work "$HOME/be7000-build" --kernel-dir "$HOME/be7000-build/linux" --stock-dir "$HOME/be7000-build/sender-linux" -j "$(nproc)"
 ```
 
 Build output:

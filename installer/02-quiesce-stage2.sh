@@ -139,7 +139,7 @@ flush_runtime_network_state()
 		[ "$IFACE_NAME" = "lo" ] && continue
 		ip link set dev "$IFACE_NAME" down >/dev/null 2>&1 || true
 	done
-	for VIRTUAL_IFACE in bond0 br-lan br-guest awg-warp utun tun0; do
+	for VIRTUAL_IFACE in bond0 br-lan br-guest utun tun0; do
 		ip link delete "$VIRTUAL_IFACE" >/dev/null 2>&1 || true
 	done
 }
@@ -267,45 +267,6 @@ done
 trap '' TERM INT
 echo "quiescing" > "$PHASE_FILE"
 log "quiescing started"
-
-# Stop the USB-backed proxy without invoking tproxy.sh stop: that normal stop
-# path rewrites persistent /data/etc/config/dhcp and restarts dnsmasq.  A
-# kexec quiesce needs runtime cleanup only and should avoid new NAND I/O.
-log "stopping Mihomo and removing runtime TPROXY state"
-if [ -r /tmp/proxy.pid ]; then
-	PROXY_PID=$(cat /tmp/proxy.pid 2>/dev/null || true)
-	[ -z "$PROXY_PID" ] || kill "$PROXY_PID" 2>/dev/null || true
-	for WAIT_STEP in 1 2 3 4 5; do
-		[ -z "$PROXY_PID" ] || ! kill -0 "$PROXY_PID" 2>/dev/null || sleep 1
-	done
-	rm -f /tmp/proxy.pid
-fi
-killall -TERM mihomo 2>/dev/null || true
-sleep 2
-killall -KILL mihomo 2>/dev/null || true
-
-for PROTO in tcp udp; do
-	while iptables -t mangle -D PREROUTING -p "$PROTO" \
-		-j shellcrash_mark >/dev/null 2>&1; do :; done
-	for LAN_IFACE in br-lan br-guest; do
-		while ip6tables -t mangle -D PREROUTING -i "$LAN_IFACE" \
-			-p "$PROTO" -j shellcrash_mark >/dev/null 2>&1; do :; done
-	done
-done
-iptables -t mangle -F shellcrash_mark >/dev/null 2>&1 || true
-iptables -t mangle -X shellcrash_mark >/dev/null 2>&1 || true
-ip6tables -t mangle -F shellcrash_mark >/dev/null 2>&1 || true
-ip6tables -t mangle -X shellcrash_mark >/dev/null 2>&1 || true
-while ip rule del fwmark 0x1ed4 lookup 100 >/dev/null 2>&1; do :; done
-while ip route del local 0.0.0.0/0 dev lo table 100 >/dev/null 2>&1; do :; done
-while ip -6 rule del fwmark 0x1ed4 lookup 100 >/dev/null 2>&1; do :; done
-while ip -6 route del local ::/0 dev lo table 100 >/dev/null 2>&1; do :; done
-
-if [ -x /data/proxy/wg/awg-warp.sh ]; then
-	log "stopping AWG/WARP interface"
-	/usr/bin/timeout -t 15 /data/proxy/wg/awg-warp.sh stop >> "$TMP_LOG" 2>&1 ||
-		log "awg-warp.sh stop returned nonzero or timed out"
-fi
 
 # High-I/O and event-generating user services. Autostart settings are untouched.
 for SERVICE in \
