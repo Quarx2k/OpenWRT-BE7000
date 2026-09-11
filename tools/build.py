@@ -11,7 +11,7 @@ P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from kernel_profiles import PROFILES, render_script
 from storage import USERDATA_SIZES
-VERSION='1.0.2'
+VERSION='1.0.3'
 REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
 KERNEL='50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
@@ -129,7 +129,7 @@ def finish(state):
         runtime=state['runtime']
         kit=assemble(w,Path(runtime['openwrt']),list(map(Path,runtime['modules'])),
                      Path(runtime['busybox']),Path(runtime['kexec']))
-    stamp(kit/'system',P)
+    project_version=stamp(kit/'system',P)
     for name in ['system','initramfs']:
         (kit/name/'mnt/usb').mkdir(parents=True,exist_ok=True)
         shutil.copytree(P/'runtime'/name,kit/name,dirs_exist_ok=True,symlinks=True)
@@ -209,6 +209,7 @@ FINAL_CMDLINE="console=''',1)
     provenance=json.loads((kit/'provenance.json').read_text()) if (kit/'provenance.json').exists() else {'runtime':'prebuilt input; original build provenance is unavailable'}
     provenance['this_build']={'kernel':KERNEL,'sender_abi':STOCK,'supported_kernels':PROFILES,
                               'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if runtime_kit else 'source'}
+    provenance['release']={'version':VERSION,'project_revision':project_version}
     for target in [kit/'provenance.json',kit/'system/usr/share/be7000/provenance.json',w/'release/provenance.json']:
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(json.dumps(provenance,indent=2)+'\n')
     release=w/'release'

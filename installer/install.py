@@ -12,7 +12,7 @@ from autostart import install as install_autostart
 from ui import ask, choose, confirm, say, styled
 from kernel_profiles import render_script, parse_preflight, check_bundle, check_existing
 
-VERSION='1.0.2'
+VERSION='1.0.3'
 RELEASE=f'https://github.com/Quarx2k/OpenWRT-BE7000/releases/download/v{VERSION}/BE7000-OpenWrt-{VERSION}.tar.gz'
 BASE='BE7000-OpenWrt'
 DEVICE_CHECK='[ -c /dev/kexec ] || die "/dev/kexec was not created"'
