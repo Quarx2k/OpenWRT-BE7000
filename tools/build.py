@@ -2,7 +2,7 @@
 """Build OpenWrt, QSDK kernel, runtime and clean USB images on Linux."""
 from pathlib import Path
 import argparse, subprocess, shutil, tarfile, gzip, os, stat, re, json, urllib.request, sys
-from build_runtime import bootstrap
+from build_runtime import prepare_runtime, assemble
 from build_kmods import package as package_kmods
 from build_version import stamp
 from sysupgrade import package as package_sysupgrade
@@ -16,7 +16,11 @@ REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
 KERNEL='50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
 
-def run(*args):subprocess.run(list(map(str,args)),check=True)
+def run(*args, compile=False):
+    env=None
+    if compile and os.environ.get('FAKEROOTKEY'):
+        env={k:v for k,v in os.environ.items() if k not in ['FAKEROOTKEY','LD_PRELOAD']}
+    subprocess.run(list(map(str,args)),check=True,env=env)
 
 def cpio(root,dest):
     output=bytearray();ino=0
@@ -62,13 +66,19 @@ def usb_images(work,system,release):
 
 def main():
     a=argparse.ArgumentParser(description=__doc__)
-    a.add_argument('--work',type=Path,default=Path.home()/'be7000-build')
+    a.add_argument('--work',type=Path,default=P/'build',help='Build directory (default: build/ inside the project)')
     a.add_argument('--runtime-kit',type=Path,help='Reuse a prebuilt runtime instead of building its components')
     a.add_argument('--kernel-dir',type=Path);a.add_argument('--stock-dir',type=Path)
     a.add_argument('--cross-compile');a.add_argument('-j',type=int,default=min(os.cpu_count() or 4,16))
-    args=a.parse_args();w=args.work.resolve();w.mkdir(parents=True,exist_ok=True)
-    if str(w).startswith('/mnt/'):raise ValueError('Use a Linux filesystem for --work, e.g. ~/be7000-build')
-    if os.geteuid()!=0:raise ValueError('Run through sudo to preserve rootfs ownership and device nodes')
+    a.add_argument('--finish',type=Path,help=argparse.SUPPRESS)
+    args=a.parse_args()
+    if args.finish:
+        finish(json.loads(args.finish.read_text()))
+        return
+    w=args.work.resolve();w.mkdir(parents=True,exist_ok=True)
+    if str(w).startswith('/mnt/'):raise ValueError('Keep the project and build directory on the Linux filesystem')
+    fakeroot=shutil.which('fakeroot')
+    if not fakeroot:a.error('Install fakeroot to create the firmware images')
     k=source(w,'linux','kernel-qsdk-12.1-r5',KERNEL,args.kernel_dir)
     stock=source(w,'stock-linux-r5','stock-abi-qsdk-12.1-r5-20260127',STOCK,args.stock_dir)
     cross=args.cross_compile
@@ -83,11 +93,31 @@ def main():
     run(cross+'gcc','--version')
     b=w/'kernel-build';b.mkdir(exist_ok=True)
     if not (b/'.config').exists():shutil.copy2(P/'configs/kernel.config',b/'.config')
-    if args.runtime_kit:
+    state={'work':str(w),'kernel':str(k),'stock':str(stock),'cross':cross,'jobs':args.j,
+           'runtime_kit':str(args.runtime_kit.resolve()) if args.runtime_kit else None}
+    if not args.runtime_kit:
+        # Compile normally; only rootfs assembly needs simulated ownership.
+        run(k/'scripts/config','--file',b/'.config','--set-str','INITRAMFS_SOURCE','')
+        owrt,built,busy,kexec=prepare_runtime(w,k,b,cross,args.j)
+        state['runtime']={'openwrt':str(owrt),'modules':list(map(str,built)),
+                          'busybox':str(busy),'kexec':str(kexec)}
+    job=w/'image-build.json';job.write_text(json.dumps(state))
+    database=w/'.fakeroot-state'
+    command=[fakeroot]
+    if database.exists():command+=['-i',database]
+    run(*command,'-s',database,'--',sys.executable,Path(__file__).resolve(),'--finish',job)
+
+
+def finish(state):
+    if os.geteuid()!=0:raise ValueError('Image assembly must run under fakeroot')
+    w=Path(state['work']);k=Path(state['kernel']);stock=Path(state['stock'])
+    cross=state['cross'];jobs=state['jobs'];b=w/'kernel-build'
+    runtime_kit=state['runtime_kit']
+    if runtime_kit:
         kit=w/'runtime'
         if not kit.exists():
             kit.mkdir()
-            with tarfile.open(args.runtime_kit) as t:t.extractall(kit,filter='tar')
+            with tarfile.open(runtime_kit) as t:t.extractall(kit,filter='tar',numeric_owner=True)
         if not (kit/'provenance.json').exists() or json.loads((kit/'provenance.json').read_text()).get('vendor_delivery')!='installer-v1':
             raise ValueError('This runtime kit predates installer-provided WLAN; rebuild without --runtime-kit')
         if not (kit/'kernel.config').exists() or not (kit/'system/usr/share/be7000/kmods.json').exists():
@@ -96,10 +126,9 @@ def main():
             raise ValueError('Runtime kit kernel differs from the pinned source; rebuild without --runtime-kit')
         shutil.copy2(kit/'kernel.config',b/'.config')
     else:
-        # Modules are built against an initial kernel without an embedded root;
-        # the final Image embeds the freshly assembled rescue environment below.
-        run(k/'scripts/config','--file',b/'.config','--set-str','INITRAMFS_SOURCE','')
-        kit=bootstrap(w,k,b,cross,args.j)
+        runtime=state['runtime']
+        kit=assemble(w,Path(runtime['openwrt']),list(map(Path,runtime['modules'])),
+                     Path(runtime['busybox']),Path(runtime['kexec']))
     stamp(kit/'system',P)
     for name in ['system','initramfs']:
         (kit/name/'mnt/usb').mkdir(parents=True,exist_ok=True)
@@ -129,7 +158,7 @@ def main():
     initramfs=w/'initramfs.cpio.gz';cpio(kit/'initramfs',initramfs)
     run(k/'scripts/config','--file',b/'.config','--set-str','INITRAMFS_SOURCE',initramfs,'--module','NFT_QUEUE')
     common=['make','-C',k,'O='+str(b),'ARCH=arm64','CROSS_COMPILE='+cross,'KERNELRELEASE=5.4.164']
-    run(*common,'olddefconfig');run(*common,'-j'+str(args.j),'Image','modules_prepare')
+    run(*common,'olddefconfig',compile=True);run(*common,'-j'+str(jobs),'Image','modules_prepare',compile=True)
     payload=w/'release/payload';payload.mkdir(parents=True,exist_ok=True)
     for name in ['Image','System.map']:
         shutil.copy2(b/('arch/arm64/boot/Image' if name=='Image' else name),payload/name)
@@ -139,23 +168,23 @@ def main():
     sb=w/'stock-build-r5';sb.mkdir(exist_ok=True)
     if not (sb/'.config').exists():shutil.copy2(P/'configs/stock-sender.config',sb/'.config')
     stockargs=['make','-C',stock,'O='+str(sb),'ARCH=arm64','CROSS_COMPILE='+cross,'KERNELRELEASE=5.4.164']
-    run(*stockargs,'olddefconfig','modules_prepare')
-    run(*stockargs,'M='+str(sender/'kernel'),'-j'+str(args.j),'modules')
+    run(*stockargs,'olddefconfig','modules_prepare',compile=True)
+    run(*stockargs,'M='+str(sender/'kernel'),'-j'+str(jobs),'modules',compile=True)
     shutil.copy2(sender/'kernel/kexec_mod.ko',payload/'kexec_mod.ko')
     shutil.copy2(sender/'kernel/arch/arm64/kexec_mod_arm64.ko',payload/'kexec_mod_arm64.ko')
     for name in ['kexec_mod.ko','kexec_mod_arm64.ko']:
         if ('be7000_source_kernels='+','.join(PROFILES)+'\0').encode() not in (payload/name).read_bytes():
             raise ValueError('Sender does not match the installer kernel profiles: '+name)
-    if not args.runtime_kit:
+    if not runtime_kit:
         cfg=w/'cfg80211'
         shutil.copytree(k/'net/wireless',cfg,dirs_exist_ok=True)
-        run(*common,'M='+str(cfg),'KCFLAGS=-Wno-error=discarded-qualifiers -I'+str(cfg),'-j'+str(args.j),'modules')
+        run(*common,'M='+str(cfg),'KCFLAGS=-Wno-error=discarded-qualifiers -I'+str(cfg),'-j'+str(jobs),'modules',compile=True)
         dest=kit/'system/opt/be7000/wlan/modules/cfg80211.ko';shutil.copy2(cfg/'cfg80211.ko',dest)
         run(cross+'strip','--strip-debug',dest)
     vendor_manifest=kit/'system/opt/be7000/wlan/manifest.json'
     vendor_manifest.write_text(json.dumps({'cfg80211':{'origin':'built from source','kernel_commit':KERNEL},
         'other_wifi_modules':'not bundled; copied from the router by the installer'},indent=2)+'\n')
-    if not args.runtime_kit:
+    if not runtime_kit:
         package_kmods(w,w/'openwrt',b,kit/'system')
     shutil.copy2(b/'.config',kit/'kernel.config')
     obsolete=kit/'system/opt/be7000/nft/modules'
@@ -179,7 +208,7 @@ FINAL_CMDLINE="console=''',1)
         dest=payload/f.name;dest.write_text(data);dest.chmod(0o755);run('sh','-n',dest)
     provenance=json.loads((kit/'provenance.json').read_text()) if (kit/'provenance.json').exists() else {'runtime':'prebuilt input; original build provenance is unavailable'}
     provenance['this_build']={'kernel':KERNEL,'sender_abi':STOCK,'supported_kernels':PROFILES,
-                              'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if args.runtime_kit else 'source'}
+                              'cfg80211':KERNEL,'runtime_mode':'prebuilt-kit' if runtime_kit else 'source'}
     for target in [kit/'provenance.json',kit/'system/usr/share/be7000/provenance.json',w/'release/provenance.json']:
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(json.dumps(provenance,indent=2)+'\n')
     release=w/'release'
@@ -200,7 +229,7 @@ FINAL_CMDLINE="console=''',1)
             run('git','clone','https://git.openwrt.org/project/fwtool.git',toolsrc)
         run('git','-C',toolsrc,'checkout','--detach','04cd252e4e9394ffacd51f56f1f124abc534f715')
         fwtool=toolsrc/'fwtool'
-        run('cc','-O2','-o',fwtool,toolsrc/'fwtool.c')
+        run('cc','-O2','-o',fwtool,toolsrc/'fwtool.c',compile=True)
     print('Sysupgrade image:',package_sysupgrade(release,w/f'BE7000-OpenWrt-{VERSION}-sysupgrade.bin',fwtool,VERSION))
     print('Release bundle:',w/f'BE7000-OpenWrt-{VERSION}.tar.gz')
     print('Runtime archive:',w/f'BE7000-runtime-{VERSION}.tar.gz')

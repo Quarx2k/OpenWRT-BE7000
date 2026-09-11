@@ -184,7 +184,7 @@ def assemble(work,owrt,built,busy,kexec):
     system=kit/'system';system.mkdir(parents=True)
     archives=list((owrt/'bin/targets/armsr/armv8').glob('*-generic-rootfs.tar.gz'))
     if len(archives)!=1:raise ValueError('Expected one OpenWrt rootfs archive')
-    with tarfile.open(archives[0]) as t:t.extractall(system,filter='tar')
+    with tarfile.open(archives[0]) as t:t.extractall(system,filter='tar',numeric_owner=True)
     # The generic armsr kernel is only a build dependency. BE7000 uses QSDK.
     for rel in ['lib/modules','etc/modules.d','etc/modules-boot.d']:
         path=system/rel
@@ -227,10 +227,7 @@ def assemble(work,owrt,built,busy,kexec):
     (system/'etc/rc.d/K18be7000-acceleration').symlink_to('../init.d/be7000-acceleration')
     (system/'etc/inittab').write_text('::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyMSM0::askfirst:/usr/libexec/login.sh\n')
     copy(kexec,kit/'payload/kexec')
-    tools=checkout(work,'amneziawg-tools')
-    compiler=next((owrt/'staging_dir').glob('toolchain-aarch64*/bin/aarch64-openwrt-linux-musl-gcc'))
-    run('make','-C',tools/'src','CC='+str(compiler),'WITH_BASHCOMPLETION=no','WITH_WGQUICK=no','-j4')
-    copy(tools/'src/wg',system/'usr/bin/awg')
+    copy(work/'amneziawg-tools/src/wg',system/'usr/bin/awg')
     provenance={'sources':LOCK,'built_from_source':['OpenWrt userspace','iwinfo','QSDK kernel','cfg80211','kexec sender','kexec-tools 2.0.32','BusyBox 1.37.0','AmneziaWG tools','netguard','kmsg-log']+[p.name for p in built],
         'vendor_binaries':{'included':False,'delivery':'installer copies WLAN modules and firmware from the router'},'calibration':'Not included; copied from each router by installer'}
     provenance['vendor_delivery']='installer-v1'
@@ -239,11 +236,14 @@ def assemble(work,owrt,built,busy,kexec):
     (kit/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
     return kit
 
-def bootstrap(work,k,b,cross,jobs):
+def prepare_runtime(work,k,b,cross,jobs):
     owrt=userspace(work,jobs)
     built=modules(work,k,b,cross,jobs)
     busy,kexec=static_tools(work,jobs)
-    return assemble(work,owrt,built,busy,kexec)
+    tools=checkout(work,'amneziawg-tools')
+    compiler=next((owrt/'staging_dir').glob('toolchain-aarch64*/bin/aarch64-openwrt-linux-musl-gcc'))
+    run('make','-C',tools/'src','CC='+str(compiler),'WITH_BASHCOMPLETION=no','WITH_WGQUICK=no','-j4')
+    return owrt,built,busy,kexec
 
 if __name__=='__main__':
     a=argparse.ArgumentParser(description=__doc__)
