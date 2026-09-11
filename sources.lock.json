@@ -6,25 +6,30 @@
   },
   "ssdk": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-ssdk.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "558232b6b80ec918497b5dfbdb6c7f5b92a07ab6",
     "patch": "patches/components/ssdk.patch"
   },
   "ppe": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-ppe.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "c55f6bcd609b1e05d84269ab06e631215ff9338e",
     "patch": "patches/components/ppe.patch"
   },
   "dp": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-dp.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "dd72d787d198511f9cbeac250a83534d9d620844"
   },
   "nat46": {
     "url": "https://github.com/ayourtch/nat46.git",
+    "branch": "master",
     "revision": "1182f30785e4274913f01a8c3d7e1b5437ae3819",
     "patch": "patches/components/nat46.patch"
   },
   "amneziawg": {
     "url": "https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git",
+    "tag": "v1.0.20260725",
     "revision": "ae0924ca700520ca34c5bdbcfd05b2f683ea9353",
     "patch": "patches/components/amneziawg.patch"
   },
@@ -40,6 +45,7 @@
   },
   "amneziawg-tools": {
     "url": "https://github.com/amnezia-vpn/amneziawg-tools.git",
+    "tag": "v1.0.20260618-2",
     "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a"
   },
   "wireguard": {
@@ -49,34 +55,42 @@
   },
   "emesh-sp": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/emesh-sp.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "0aca76f5e9261f3361f3a72639c55f0038fc35e7"
   },
   "nss-drv": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-drv.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "cabaac4744d1c65ab4ca0f4da66c086a97f20d7f"
   },
   "nss-eip": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-eip.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "6427c3bc836dfc19f1a91bf25f0dc5a6e0f7b383"
   },
   "nss-nsm": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-nsm.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "bbef4419bb6fd8e0402ff0aea97712482df0b730"
   },
   "nss-speedtest": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-speedtest.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "7924a20b1f0a3f3486728d04fa6bcbe9ebe5ea46"
   },
   "qca-nss-ecm": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-nss-ecm.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "a1aecbeecba64c61a8540be4c4d865378368fa62"
   },
   "qca-ovsmgr": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/qca-ovsmgr.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "513336e9812e9028b9f0d72aab22fbeac974e48e"
   },
   "shortcut-fe": {
     "url": "https://git.codelinaro.org/clo/qsdk/oss/lklm/shortcut-fe.git",
+    "branch": "NHSS.QSDK.12.1.r5",
     "revision": "0d18bb6ce9dc1decb3c57985715feab3b4d30589"
   }
 }

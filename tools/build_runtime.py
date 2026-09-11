@@ -15,11 +15,11 @@ def run(*args, cwd=None):
 def checkout(work,name):
     entry=LOCK[name];tree=work/name
     if not (tree/'.git').exists():
-        tree.mkdir(parents=True,exist_ok=True)
-        run('git','init',tree)
-        run('git','-C',tree,'remote','add','origin',entry['url'])
-        run('git','-C',tree,'fetch','--depth=1','origin',entry['revision'])
-        run('git','-C',tree,'checkout','--detach','FETCH_HEAD')
+        ref=entry.get('tag') or entry['branch']
+        run('git','clone','--depth=1','--single-branch','--branch',ref,'--no-checkout',entry['url'],tree)
+        present=subprocess.run(['git','-C',str(tree),'cat-file','-e',entry['revision']+'^{commit}'],capture_output=True)
+        if present.returncode:run('git','-C',tree,'fetch','--depth=1','origin',entry['revision'])
+        run('git','-C',tree,'checkout','--detach',entry['revision'])
     actual=subprocess.check_output(['git','-C',str(tree),'rev-parse','HEAD'],text=True).strip()
     if actual!=entry['revision']:raise ValueError(f'{name}: unexpected source revision {actual}')
     if entry.get('patch'):

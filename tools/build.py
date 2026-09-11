@@ -226,7 +226,7 @@ FINAL_CMDLINE="console=''',1)
         # Runtime-kit builds also need the small upstream image-metadata tool.
         toolsrc=w/'fwtool-source'
         if not toolsrc.exists():
-            run('git','clone','https://git.openwrt.org/project/fwtool.git',toolsrc)
+            run('git','clone','--single-branch','--branch','master','--no-checkout','https://git.openwrt.org/project/fwtool.git',toolsrc)
         run('git','-C',toolsrc,'checkout','--detach','04cd252e4e9394ffacd51f56f1f124abc534f715')
         fwtool=toolsrc/'fwtool'
         run('cc','-O2','-o',fwtool,toolsrc/'fwtool.c',compile=True)
