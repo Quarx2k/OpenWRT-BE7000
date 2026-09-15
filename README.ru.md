@@ -301,7 +301,6 @@ cd OpenWRT-BE7000
 | --- | --- |
 | `BE7000-OpenWrt-1.0.3.tar.gz` | Образ для установщика |
 | `BE7000-OpenWrt-1.0.3-sysupgrade.bin` | Обновление через LuCI |
-| `BE7000-runtime-1.0.3.tar.gz` | Компоненты для повторной сборки с `--runtime-kit` |
 
 Сборка установщика Windows (Python 3.12):
 

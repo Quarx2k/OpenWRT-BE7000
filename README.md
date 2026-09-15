@@ -301,7 +301,6 @@ Sources, build files and output are stored in `build/` inside the project. Use `
 | --- | --- |
 | `BE7000-OpenWrt-1.0.3.tar.gz` | Image for the installer |
 | `BE7000-OpenWrt-1.0.3-sysupgrade.bin` | Update through LuCI |
-| `BE7000-runtime-1.0.3.tar.gz` | Prebuilt components for reuse with `--runtime-kit` |
 
 Windows installer build (Python 3.12):
 
