@@ -135,6 +135,7 @@ def finish(state):
         shutil.copytree(P/'runtime'/name,kit/name,dirs_exist_ok=True,symlinks=True)
         for f in (P/'runtime'/name).rglob('*'):
             if f.is_file() and f.read_bytes().startswith(b'#!'):(kit/name/f.relative_to(P/'runtime'/name)).chmod(0o755)
+    (kit/'initramfs/rescue/bin/check-ext4.sh').unlink(missing_ok=True)
     late_cpus=kit/'system/etc/rc.d/S96be7000-cpus'
     if late_cpus.is_symlink() and os.readlink(late_cpus)=='../init.d/be7000-cpus':late_cpus.unlink()
     for name in ['S17be7000-cpus','S19be7000-acceleration','K18be7000-acceleration','S20be7000-swap','K90be7000-swap','S99be7000-boot-confirm','S99be7000-crypto']:

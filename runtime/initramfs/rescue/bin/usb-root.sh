@@ -6,14 +6,10 @@ test -f "$base/system.img"
 test -f "$base/userdata.img"
 $BB mkdir -p /mnt/owrt-system /mnt/owrt-data /mnt/owrt-root
 sysloop=$($BB losetup -f)
-$BB losetup "$sysloop" "$base/system.img"
-$BB sh /rescue/bin/check-ext4.sh "$sysloop"
-$BB losetup -d "$sysloop"
 $BB losetup -r "$sysloop" "$base/system.img"
 $BB mount -t ext4 -o ro "$sysloop" /mnt/owrt-system
 dataloop=$($BB losetup -f)
 $BB losetup "$dataloop" "$base/userdata.img"
-$BB sh /rescue/bin/check-ext4.sh "$dataloop"
 $BB mount -t ext4 -o rw,noatime "$dataloop" /mnt/owrt-data
 test "$(cat /mnt/owrt-system/etc/be7000-system-id)" = "$(cat /mnt/owrt-data/base-id)"
 $BB mount -t overlay overlay -o lowerdir=/mnt/owrt-system,upperdir=/mnt/owrt-data/upper,workdir=/mnt/owrt-data/work /mnt/owrt-root
