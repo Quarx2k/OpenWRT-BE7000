@@ -1,3 +1,63 @@
+diff --git a/src/compat/compat.h b/src/compat/compat.h
+index 3b8606d..9437889 100644
+--- a/src/compat/compat.h
++++ b/src/compat/compat.h
+@@ -1416,7 +1416,55 @@ static inline struct dst_entry *ip6_dst_lookup_flow(struct net *net, const struc
+ #endif
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
++#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
++
++#ifndef _CRYPTO_CHACHA_H
++#define _CRYPTO_CHACHA_H
++
++#include <linux/string.h>
++#include <zinc/chacha20.h>
++
++#define CHACHA_IV_SIZE 16
++#define CHACHA_KEY_SIZE CHACHA20_KEY_SIZE
++#define CHACHA_BLOCK_SIZE CHACHA20_BLOCK_SIZE
++#define CHACHAPOLY_IV_SIZE 12
++
++static inline void chacha_init(u32 *state, const u32 *key, const u8 *iv)
++{
++	state[0] = CHACHA20_CONSTANT_EXPA;
++	state[1] = CHACHA20_CONSTANT_ND_3;
++	state[2] = CHACHA20_CONSTANT_2_BY;
++	state[3] = CHACHA20_CONSTANT_TE_K;
++	state[4] = key[0];
++	state[5] = key[1];
++	state[6] = key[2];
++	state[7] = key[3];
++	state[8] = key[4];
++	state[9] = key[5];
++	state[10] = key[6];
++	state[11] = key[7];
++	state[12] = get_unaligned_le32(iv + 0);
++	state[13] = get_unaligned_le32(iv + 4);
++	state[14] = get_unaligned_le32(iv + 8);
++	state[15] = get_unaligned_le32(iv + 12);
++}
++
++static inline void chacha20_crypt(u32 *state, u8 *dst, const u8 *src,
++				  unsigned int bytes)
++{
++	struct chacha20_ctx ctx;
++
++	memcpy(ctx.state, state, sizeof(ctx.state));
++	chacha20(&ctx, dst, src, bytes, DONT_USE_SIMD);
++	memcpy(state, ctx.state, sizeof(ctx.state));
++}
++
++#endif /* _CRYPTO_CHACHA_H */
++
++#else
+ #include <crypto/chacha.h>
++#endif /* LINUX_VERSION_CODE < 5.5.0 */
++
+ #define CHACHA_KEY_WORDS	8
+ #ifndef CHACHA_STATE_WORDS
+ #define CHACHA_STATE_WORDS	(CHACHA_BLOCK_SIZE / sizeof(u32))
 diff --git a/src/crypto/zinc/selftest/blake2s.c b/src/crypto/zinc/selftest/blake2s.c
 index 1b5c210..4c689a0 100644
 --- a/src/crypto/zinc/selftest/blake2s.c
@@ -21,10 +81,10 @@ index 1b5c210..4c689a0 100644
  			pr_err("blake2s unkeyed self-test %zu: FAIL\n", i + i);
  			success = false;
 diff --git a/src/socket.c b/src/socket.c
-index b4d38b1..996fcdc 100644
+index 9036e4d..a6a8a28 100644
 --- a/src/socket.c
 +++ b/src/socket.c
-@@ -81,6 +81,13 @@ static int send4(struct wg_device *wg, struct sk_buff *skb,
+@@ -82,6 +82,13 @@ static int send4(struct wg_device *wg, struct sk_buff *skb,
  			dst_cache_set_ip4(cache, &rt->dst, fl.saddr);
  	}
  

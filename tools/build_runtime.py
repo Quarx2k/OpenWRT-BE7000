@@ -131,7 +131,7 @@ def modules(work,k,b,cross,jobs):
     for rel in ['net/ipv4/udp_tunnel.c','net/ipv6/ip6_udp_tunnel.c']:copy(k/rel,deps/Path(rel).name)
     (deps/'Makefile').write_text('obj-m := udp_tunnel.o ip6_udp_tunnel.o\n')
     run(*common,'M='+str(deps),'modules')
-    run(*common,'M='+str(awg/'src'),'KBUILD_EXTRA_SYMBOLS='+str(deps/'Module.symvers'),'WIREGUARD_VERSION=2.0.20260725','modules')
+    run(*common,'M='+str(awg/'src'),'KBUILD_EXTRA_SYMBOLS='+str(deps/'Module.symvers'),'WIREGUARD_VERSION='+LOCK['amneziawg']['tag'].removeprefix('v'),'modules')
     run(*common,'M='+str(sources['wireguard']/'src'),'KBUILD_EXTRA_SYMBOLS='+str(deps/'Module.symvers'),'modules')
     built.extend([deps/'udp_tunnel.ko',deps/'ip6_udp_tunnel.ko',awg/'src/amneziawg.ko'])
     built.append(sources['wireguard']/'src/wireguard.ko')

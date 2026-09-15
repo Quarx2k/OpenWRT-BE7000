@@ -29,8 +29,8 @@
   },
   "amneziawg": {
     "url": "https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git",
-    "tag": "v1.0.20260725",
-    "revision": "ae0924ca700520ca34c5bdbcfd05b2f683ea9353",
+    "tag": "v3.1.20260906",
+    "revision": "4569c4c67f3a57414969260cafbbd04694fbaae0",
     "patch": "patches/components/amneziawg.patch"
   },
   "busybox": {
@@ -45,8 +45,8 @@
   },
   "amneziawg-tools": {
     "url": "https://github.com/amnezia-vpn/amneziawg-tools.git",
-    "tag": "v1.0.20260618-2",
-    "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a"
+    "tag": "v3.1.20260812",
+    "revision": "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
   },
   "wireguard": {
     "url": "https://git.zx2c4.com/wireguard-linux-compat",
