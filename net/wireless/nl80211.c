@@ -4981,6 +4981,10 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 			goto out;
 	}
 
+	err = qcom_ht40_prepare_ap(rdev, wdev, &params.chandef);
+	if (err)
+		goto out;
+
 	wdev_lock(wdev);
 	err = rdev_start_ap(rdev, dev, &params);
 	if (!err && qcom_he) {

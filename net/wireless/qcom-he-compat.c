@@ -171,6 +171,21 @@ static int qcom_he_set(struct cfg80211_registered_device *rdev,
 	return cmd->doit(&rdev->wiphy, wdev, args, sizeof(args));
 }
 
+int qcom_ht40_prepare_ap(struct cfg80211_registered_device *rdev,
+			struct wireless_dev *wdev,
+			const struct cfg80211_chan_def *chandef)
+{
+	ASSERT_RTNL();
+	if (!chandef->chan || chandef->chan->band != NL80211_BAND_2GHZ ||
+	    !qcom_he_command(&rdev->wiphy))
+		return 0;
+
+	/* hostapd owns OBSS scanning and 20/40 coexistence for this AP.
+	 * QSDK's second scan would override its selected channel width.
+	 */
+	return qcom_he_set(rdev, wdev, 200, 124, 1, 0, 0); /* COEXT_DISABLE */
+}
+
 int qcom_he_apply(struct cfg80211_registered_device *rdev,
 		  struct wireless_dev *wdev, struct genl_info *info,
 		  const struct qcom_he_config *cfg)

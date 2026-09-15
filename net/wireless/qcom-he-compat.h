@@ -21,6 +21,9 @@ void qcom_dfs_exit(void);
 int qcom_reg_set_country(struct cfg80211_registered_device *rdev,
 			 const char alpha2[2]);
 int qcom_reg_prepare_ap(struct cfg80211_registered_device *rdev);
+int qcom_ht40_prepare_ap(struct cfg80211_registered_device *rdev,
+			struct wireless_dev *wdev,
+			const struct cfg80211_chan_def *chandef);
 int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg);
 int qcom_he_apply(struct cfg80211_registered_device *rdev,
 		  struct wireless_dev *wdev, struct genl_info *info,
