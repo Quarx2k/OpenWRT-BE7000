@@ -62,6 +62,21 @@ int qcom_reg_set_country(struct cfg80211_registered_device *rdev,
 		err = cmd->doit(&rdev->wiphy, radio, args, sizeof(args));
 		if (err)
 			return err;
+		/* QSDK has rebuilt the channels for this country. The original
+		 * power snapshot belongs to its previous country, not hardware.
+		 */
+		if (!(rdev->wiphy.regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED)) {
+			enum nl80211_band band;
+
+			for (band = 0; band < NUM_NL80211_BANDS; band++) {
+				struct ieee80211_supported_band *sband = rdev->wiphy.bands[band];
+
+				if (!sband)
+					continue;
+				for (i = 0; i < sband->n_channels; i++)
+					sband->channels[i].orig_mpwr = sband->channels[i].max_power;
+			}
+		}
 		memcpy(rdev->qcom_country, alpha2, 2);
 		pr_info("cfg80211: QSDK %s country %.2s applied\n",
 			radio->netdev->name, alpha2);

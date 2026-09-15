@@ -3717,6 +3717,67 @@ int set_regdom(const struct ieee80211_regdomain *rd,
 	return 0;
 }
 
+/* QSDK merges UNII-1 and UNII-2A for 160 MHz, retaining only UNII-2A's
+ * power limit. Its freshly populated channel entries still contain both
+ * limits. Restore the boundary; AUTO_BW keeps the combined width usable.
+ */
+static const struct ieee80211_regdomain *
+qcom_copy_regd(struct wiphy *wiphy, const struct ieee80211_regdomain *rd)
+{
+	struct ieee80211_regdomain *copy;
+	struct ieee80211_reg_rule *lower, *upper;
+	int power[2] = { -1, -1 };
+	unsigned int i, freq;
+
+	if (!qcom_dfs_compat_active(wiphy_to_rdev(wiphy)) ||
+	    rd->n_reg_rules >= NL80211_MAX_SUPP_REG_RULES)
+		return reg_copy_regd(rd);
+
+	for (i = 0; i < rd->n_reg_rules; i++) {
+		const struct ieee80211_reg_rule *rule = &rd->reg_rules[i];
+
+		if (rule->freq_range.start_freq_khz == MHZ_TO_KHZ(5170) &&
+		    rule->freq_range.end_freq_khz == MHZ_TO_KHZ(5330) &&
+		    rule->freq_range.max_bandwidth_khz == MHZ_TO_KHZ(160) &&
+		    (rule->flags & NL80211_RRF_AUTO_BW))
+			break;
+	}
+	if (i == rd->n_reg_rules)
+		return reg_copy_regd(rd);
+
+	for (freq = 5180; freq <= 5320; freq += 20) {
+		struct ieee80211_channel *chan = ieee80211_get_channel(wiphy, freq);
+		unsigned int half = freq >= 5260;
+
+		if (!chan || chan->max_power <= 0 ||
+		    (power[half] >= 0 && power[half] != chan->max_power))
+			return reg_copy_regd(rd);
+		power[half] = chan->max_power;
+	}
+	if (power[0] == power[1] ||
+	    rd->reg_rules[i].power_rule.max_eirp != DBM_TO_MBM(power[1]))
+		return reg_copy_regd(rd);
+
+	copy = kzalloc(struct_size(copy, reg_rules, rd->n_reg_rules + 1),
+		       GFP_KERNEL);
+	if (!copy)
+		return ERR_PTR(-ENOMEM);
+	memcpy(copy, rd, offsetof(struct ieee80211_regdomain, reg_rules));
+	copy->n_reg_rules++;
+	memcpy(copy->reg_rules, rd->reg_rules,
+	       (i + 1) * sizeof(*copy->reg_rules));
+	memcpy(&copy->reg_rules[i + 1], &rd->reg_rules[i],
+	       (rd->n_reg_rules - i) * sizeof(*copy->reg_rules));
+	lower = &copy->reg_rules[i];
+	upper = &copy->reg_rules[i + 1];
+	lower->freq_range.end_freq_khz = MHZ_TO_KHZ(5250);
+	lower->freq_range.max_bandwidth_khz = MHZ_TO_KHZ(80);
+	lower->power_rule.max_eirp = DBM_TO_MBM(power[0]);
+	upper->freq_range.start_freq_khz = MHZ_TO_KHZ(5250);
+	upper->freq_range.max_bandwidth_khz = MHZ_TO_KHZ(80);
+	return copy;
+}
+
 static int __regulatory_set_wiphy_regd(struct wiphy *wiphy,
 				       struct ieee80211_regdomain *rd)
 {
@@ -3736,7 +3797,7 @@ static int __regulatory_set_wiphy_regd(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 
-	regd = reg_copy_regd(rd);
+	regd = qcom_copy_regd(wiphy, rd);
 	if (IS_ERR(regd))
 		return PTR_ERR(regd);
 
