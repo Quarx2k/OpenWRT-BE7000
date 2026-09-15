@@ -20,3 +20,4 @@
 0020-Allow-atomic-replacement-of-active-flowtables.patch
 0021-Translate-QSDK-DFS-events-and-apply-country-settings.patch
 0022-Preserve-QSDK-channel-transmit-power-limits.patch
+0023-Let-hostapd-control-QSDK-HT40-coexistence.patch
