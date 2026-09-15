@@ -13,7 +13,7 @@ from kernel_profiles import PROFILES, render_script
 from storage import USERDATA_SIZES
 VERSION='1.0.3'
 REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
-KERNEL='50fdc574baa2d3bfe3ab36be8f6d362441e6cd6f'
+KERNEL='84f917c0fdaed8e30c721877a9b0331230288373'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
 
 def run(*args, compile=False):

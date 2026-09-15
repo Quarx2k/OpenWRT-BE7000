@@ -1,0 +1,461 @@
+From 84f917c0fdaed8e30c721877a9b0331230288373 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Tue, 15 Sep 2026 22:42:31 +0600
+Subject: [PATCH 21/22] Translate QSDK DFS events and apply country settings
+
+---
+ include/net/wext.h            |  10 ++
+ net/wireless/Makefile         |   1 +
+ net/wireless/core.c           |  10 ++
+ net/wireless/core.h           |   2 +
+ net/wireless/nl80211.c        |   4 +
+ net/wireless/qcom-dfs.c       | 190 ++++++++++++++++++++++++++++++++++
+ net/wireless/qcom-he-compat.c |  44 ++++++++
+ net/wireless/qcom-he-compat.h |   6 ++
+ net/wireless/reg.c            |  14 +++
+ net/wireless/wext-core.c      |  22 ++++
+ 10 files changed, 303 insertions(+)
+ create mode 100644 net/wireless/qcom-dfs.c
+
+diff --git a/include/net/wext.h b/include/net/wext.h
+index aa192a670..2a87d0c48 100644
+--- a/include/net/wext.h
++++ b/include/net/wext.h
+@@ -5,8 +5,18 @@
+ #include <net/iw_handler.h>
+ 
+ struct net;
++struct notifier_block;
++
++struct wireless_event_info {
++	struct net_device *dev;
++	const union iwreq_data *wrqu;
++	const char *extra;
++};
+ 
+ #ifdef CONFIG_WEXT_CORE
++int register_wireless_event_notifier(struct notifier_block *nb);
++void unregister_wireless_event_notifier(struct notifier_block *nb);
++
+ int wext_handle_ioctl(struct net *net, unsigned int cmd,
+ 		      void __user *arg);
+ int compat_wext_handle_ioctl(struct net *net, unsigned int cmd,
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index 01b6ee836..36518703d 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -60,3 +60,4 @@ $(obj)/extra-certs.c: $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR:"%"=%) \
+ clean-files += shipped-certs.c extra-certs.c
+ 
+ cfg80211-y += qcom-he-compat.o
++cfg80211-y += qcom-dfs.o
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index ac2dcba8b..633d296cf 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -656,6 +656,9 @@ int wiphy_register(struct wiphy *wiphy)
+ 	int i;
+ 	u16 ifmodes = wiphy->interface_modes;
+ 
++	if (qcom_dfs_compat_active(rdev))
++		wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_DFS_OFFLOAD);
++
+ #ifdef CONFIG_PM
+ 	if (WARN_ON(wiphy->wowlan &&
+ 		    (wiphy->wowlan->flags & WIPHY_WOWLAN_GTK_REKEY_FAILURE) &&
+@@ -1498,6 +1501,12 @@ static int __init cfg80211_init(void)
+ 		goto out_fail_wq;
+ 	}
+ 
++	err = qcom_dfs_init();
++	if (err) {
++		destroy_workqueue(cfg80211_wq);
++		goto out_fail_wq;
++	}
++
+ 	return 0;
+ 
+ out_fail_wq:
+@@ -1518,6 +1527,7 @@ fs_initcall(cfg80211_init);
+ 
+ static void __exit cfg80211_exit(void)
+ {
++	qcom_dfs_exit();
+ 	debugfs_remove(ieee80211_debugfs_dir);
+ 	nl80211_exit();
+ 	unregister_netdevice_notifier(&cfg80211_netdev_notifier);
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index f5a5abd63..e9a814f03 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -37,6 +37,8 @@ struct cfg80211_registered_device {
+ 	 * If the AP is reconfigured this can also be used to tell us if
+ 	 * the country on the country IE changed. */
+ 	char country_ie_alpha2[2];
++	/* Last country passed to the QSDK radio, protected by RTNL. */
++	char qcom_country[2];
+ 
+ 	/*
+ 	 * the driver requests the regulatory core to set this regulatory
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 7c0d9e8bf..2d7197126 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -4870,6 +4870,10 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
+ 			return -EINVAL;
+ 	}
+ 
++	err = qcom_reg_prepare_ap(rdev);
++	if (err)
++		return err;
++
+ 	if (info->attrs[NL80211_ATTR_WIPHY_FREQ]) {
+ 		err = nl80211_parse_chandef(rdev, info, &params.chandef);
+ 		if (err)
+diff --git a/net/wireless/qcom-dfs.c b/net/wireless/qcom-dfs.c
+new file mode 100644
+index 000000000..f7eee4288
+--- /dev/null
++++ b/net/wireless/qcom-dfs.c
+@@ -0,0 +1,190 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Translate QSDK's per-channel DFS reports, keeping CAC/radar detection in
++ * the driver. No timer here can manufacture a successful CAC completion.
++ */
++#include <linux/if_arp.h>
++#include <linux/module.h>
++#include <linux/notifier.h>
++#include <linux/rtnetlink.h>
++#include <net/wext.h>
++#include "core.h"
++#include "nl80211.h"
++#include "qcom-he-compat.h"
++
++#ifdef CONFIG_WEXT_CORE
++static ushort qcom_dfs_event_base = 44;
++module_param_named(be7000_dfs_event_base, qcom_dfs_event_base, ushort, 0444);
++MODULE_PARM_DESC(be7000_dfs_event_base, "QSDK DFS event ABI: Xiaomi 44, source P74 40");
++
++struct qcom_dfs_event {
++	struct work_struct work;
++	struct net_device *dev;
++	unsigned long timestamp;
++	u16 flag, freq;
++};
++
++static bool qcom_dfs_contains(const struct cfg80211_chan_def *def, int freq)
++{
++	int width, center, segment, f;
++
++	switch (def->width) {
++	case NL80211_CHAN_WIDTH_20_NOHT:
++	case NL80211_CHAN_WIDTH_20: width = 20; break;
++	case NL80211_CHAN_WIDTH_40: width = 40; break;
++	case NL80211_CHAN_WIDTH_80:
++	case NL80211_CHAN_WIDTH_80P80: width = 80; break;
++	case NL80211_CHAN_WIDTH_160: width = 160; break;
++	default: return false;
++	}
++
++	if (!def->chan)
++		return false;
++	for (segment = 0; segment < 2; segment++) {
++		center = segment ? def->center_freq2 : def->center_freq1;
++		if (!center)
++			continue;
++		for (f = center - width / 2 + 10; f < center + width / 2; f += 20)
++			if (freq == f)
++				return true;
++	}
++	return false;
++}
++
++static bool qcom_dfs_complete(struct wiphy *wiphy,
++			      const struct cfg80211_chan_def *def)
++{
++	struct ieee80211_supported_band *band = wiphy->bands[def->chan->band];
++	int i;
++
++	for (i = 0; i < band->n_channels; i++) {
++		struct ieee80211_channel *chan = &band->channels[i];
++
++		if (qcom_dfs_contains(def, chan->center_freq) &&
++		    (chan->flags & IEEE80211_CHAN_RADAR) &&
++		    chan->dfs_state != NL80211_DFS_AVAILABLE)
++			return false;
++	}
++	return true;
++}
++
++static void qcom_dfs_work(struct work_struct *work)
++{
++	struct qcom_dfs_event *event = container_of(work, struct qcom_dfs_event, work);
++	struct cfg80211_registered_device *rdev;
++	struct wireless_dev *radio, *wdev;
++	struct cfg80211_chan_def subchan;
++	struct ieee80211_channel *chan;
++	struct wiphy *wiphy;
++	int type;
++
++	rtnl_lock();
++	/* The held netdev reference does not keep a removed wdev alive. */
++	if (event->dev->reg_state != NETREG_REGISTERED)
++		goto out;
++	radio = event->dev->ieee80211_ptr;
++	if (!radio)
++		goto out;
++	wiphy = radio->wiphy;
++	rdev = wiphy_to_rdev(wiphy);
++	if (!qcom_dfs_compat_active(rdev))
++		goto out;
++	/* Verified UMAC ABIs: source P74 starts at40, Xiaomi1.1.38 at44. */
++	type = (int)event->flag - qcom_dfs_event_base;
++	if (type < 0 || type > 3)
++		goto out;
++	chan = ieee80211_get_channel(wiphy, event->freq);
++	if (!chan)
++		goto out;
++	cfg80211_chandef_create(&subchan, chan, NL80211_CHAN_HT20);
++
++	/* RADAR_DETECTED and NOL_STARTED both invalidate this20MHz channel.
++	 * The core maintains its usual minimum non-occupancy timer.
++	 */
++	if (type == 0 || type == 3) {
++		if (chan->dfs_state != NL80211_DFS_UNAVAILABLE)
++			cfg80211_radar_event(wiphy, &subchan, GFP_KERNEL);
++		list_for_each_entry(wdev, &wiphy->wdev_list, list) {
++			if (wdev->netdev && wdev->cac_started &&
++			    qcom_dfs_contains(&wdev->chandef, event->freq))
++				cfg80211_cac_event(wdev->netdev, &wdev->chandef,
++						   NL80211_RADAR_CAC_ABORTED, GFP_KERNEL);
++		}
++		goto out;
++	}
++
++	list_for_each_entry(wdev, &wiphy->wdev_list, list) {
++		if (!wdev->netdev || wdev->netdev->type != ARPHRD_ETHER ||
++		    wdev->iftype != NL80211_IFTYPE_AP || !wdev->beacon_interval ||
++		    !qcom_dfs_contains(&wdev->chandef, event->freq))
++			continue;
++		if (type == 1 && !wdev->cac_started) {
++			wdev->cac_time_ms = cfg80211_chandef_dfs_cac_time(wiphy, &wdev->chandef);
++			if (!wdev->cac_time_ms)
++				wdev->cac_time_ms = IEEE80211_DFS_MIN_CAC_TIME_MS;
++			wdev->cac_start_time = event->timestamp;
++			cfg80211_set_dfs_state(wiphy, &wdev->chandef, NL80211_DFS_USABLE);
++			cfg80211_cac_event(wdev->netdev, &wdev->chandef,
++					   NL80211_RADAR_CAC_STARTED, GFP_KERNEL);
++			pr_info("cfg80211: QSDK DFS %s CAC started (%u ms)\n",
++				wdev->netdev->name, wdev->cac_time_ms);
++		} else if (type == 2 && wdev->cac_started) {
++			if (!time_after_eq(event->timestamp, wdev->cac_start_time +
++					   msecs_to_jiffies(wdev->cac_time_ms))) {
++				pr_warn_ratelimited("cfg80211: QSDK DFS early CAC completion ignored\n");
++				continue;
++			}
++			cfg80211_set_dfs_state(wiphy, &subchan, NL80211_DFS_AVAILABLE);
++			if (!qcom_dfs_complete(wiphy, &wdev->chandef))
++				continue;
++			cfg80211_cac_event(wdev->netdev, &wdev->chandef,
++					   NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
++			pr_info("cfg80211: QSDK DFS %s CAC finished\n", wdev->netdev->name);
++		}
++	}
++out:
++	rtnl_unlock();
++	dev_put(event->dev);
++	kfree(event);
++}
++
++static int qcom_dfs_notify(struct notifier_block *nb, unsigned long cmd, void *ptr)
++{
++	const struct wireless_event_info *info = ptr;
++	struct qcom_dfs_event *event;
++
++	if (cmd != IWEVCUSTOM || info->wrqu->data.length != sizeof(u16) ||
++	    info->wrqu->data.flags < 40 || info->wrqu->data.flags > 47)
++		return NOTIFY_DONE;
++	event = kmalloc(sizeof(*event), GFP_ATOMIC);
++	if (!event)
++		return NOTIFY_DONE;
++	event->dev = info->dev;
++	event->timestamp = jiffies;
++	event->flag = info->wrqu->data.flags;
++	memcpy(&event->freq, info->extra, sizeof(event->freq));
++	dev_hold(event->dev);
++	INIT_WORK(&event->work, qcom_dfs_work);
++	queue_work(cfg80211_wq, &event->work);
++	return NOTIFY_OK;
++}
++
++static struct notifier_block qcom_dfs_notifier = {
++	.notifier_call = qcom_dfs_notify,
++};
++
++int qcom_dfs_init(void)
++{
++	if (qcom_dfs_event_base != 40 && qcom_dfs_event_base != 44)
++		return -EINVAL;
++	return register_wireless_event_notifier(&qcom_dfs_notifier);
++}
++
++void qcom_dfs_exit(void)
++{
++	unregister_wireless_event_notifier(&qcom_dfs_notifier);
++	flush_workqueue(cfg80211_wq);
++}
++#else
++int qcom_dfs_init(void) { return 0; }
++void qcom_dfs_exit(void) { }
++#endif
+diff --git a/net/wireless/qcom-he-compat.c b/net/wireless/qcom-he-compat.c
+index cd965382e..103aff3cd 100644
+--- a/net/wireless/qcom-he-compat.c
++++ b/net/wireless/qcom-he-compat.c
+@@ -27,6 +27,50 @@ bool qcom_he_compat_active(struct cfg80211_registered_device *rdev)
+ 	return be7000_he_compat && qcom_he_command(&rdev->wiphy);
+ }
+ 
++bool qcom_dfs_compat_active(struct cfg80211_registered_device *rdev)
++{
++	return IS_ENABLED(CONFIG_WEXT_CORE) && qcom_he_command(&rdev->wiphy) &&
++	       rdev->ops->start_ap && !rdev->ops->start_radar_detection;
++}
++
++int qcom_reg_set_country(struct cfg80211_registered_device *rdev,
++			 const char alpha2[2])
++{
++	const struct wiphy_vendor_command *cmd;
++	struct wireless_dev *radio;
++	struct { struct nlattr attr; u32 value; } args[3] = {};
++	char *country = (char *)&args[2].value;
++	int i, err;
++
++	ASSERT_RTNL();
++	if (!qcom_dfs_compat_active(rdev) ||
++	    alpha2[0] < 'A' || alpha2[0] > 'Z' ||
++	    alpha2[1] < 'A' || alpha2[1] > 'Z' ||
++	    !memcmp(rdev->qcom_country, alpha2, 2))
++		return 0;
++	cmd = qcom_he_command(&rdev->wiphy);
++	list_for_each_entry(radio, &rdev->wiphy.wdev_list, list) {
++		if (!radio->netdev || radio->netdev->type != ARPHRD_IEEE80211)
++			continue;
++		for (i = 0; i < ARRAY_SIZE(args); i++) {
++			args[i].attr.nla_type = 17 + i;
++			args[i].attr.nla_len = sizeof(args[i]);
++		}
++		args[0].value = 236; /* QSDK COUNTRY_CONFIG */
++		args[2].attr.nla_len = NLA_HDRLEN + 3;
++		memcpy(country, alpha2, 2);
++		err = cmd->doit(&rdev->wiphy, radio, args, sizeof(args));
++		if (err)
++			return err;
++		memcpy(rdev->qcom_country, alpha2, 2);
++		pr_info("cfg80211: QSDK %s country %.2s applied\n",
++			radio->netdev->name, alpha2);
++		return 1;
++	}
++	/* The raw radio may not be registered yet during wiphy setup. */
++	return 0;
++}
++
+ /* QSDK registers raw radio-control netdevs as wireless interfaces. Keep
+  * them for direct vendor requests, but do not advertise them as usable VAPs.
+  * Match raw AP controls only; Ethernet data and monitor VAPs stay visible.
+diff --git a/net/wireless/qcom-he-compat.h b/net/wireless/qcom-he-compat.h
+index ed0ac9549..253c67026 100644
+--- a/net/wireless/qcom-he-compat.h
++++ b/net/wireless/qcom-he-compat.h
+@@ -15,6 +15,12 @@ struct qcom_he_config {
+ };
+ 
+ bool qcom_he_compat_active(struct cfg80211_registered_device *rdev);
++bool qcom_dfs_compat_active(struct cfg80211_registered_device *rdev);
++int qcom_dfs_init(void);
++void qcom_dfs_exit(void);
++int qcom_reg_set_country(struct cfg80211_registered_device *rdev,
++			 const char alpha2[2]);
++int qcom_reg_prepare_ap(struct cfg80211_registered_device *rdev);
+ int qcom_he_parse(struct genl_info *info, struct qcom_he_config *cfg);
+ int qcom_he_apply(struct cfg80211_registered_device *rdev,
+ 		  struct wireless_dev *wdev, struct genl_info *info,
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index 0f3b57a73..0bda8e111 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -62,6 +62,7 @@
+ #include "reg.h"
+ #include "rdev-ops.h"
+ #include "nl80211.h"
++#include "qcom-he-compat.h"
+ 
+ /*
+  * Grace period we give before making sure all current interfaces reside on
+@@ -2235,6 +2236,10 @@ static void wiphy_update_regulatory(struct wiphy *wiphy,
+ 	}
+ 
+ 	lr->dfs_region = get_cfg80211_regdom()->dfs_region;
++	/* QSDK rebuilds channel entries here; apply cfg80211 limits afterwards. */
++	if (qcom_reg_set_country(wiphy_to_rdev(wiphy),
++				 get_cfg80211_regdom()->alpha2) < 0)
++		pr_warn_ratelimited("cfg80211: QSDK country update failed\n");
+ 
+ 	for (band = 0; band < NUM_NL80211_BANDS; band++)
+ 		handle_band(wiphy, initiator, wiphy->bands[band]);
+@@ -2244,6 +2249,15 @@ static void wiphy_update_regulatory(struct wiphy *wiphy,
+ 	reg_call_notifier(wiphy, lr);
+ }
+ 
++int qcom_reg_prepare_ap(struct cfg80211_registered_device *rdev)
++{
++	int err = qcom_reg_set_country(rdev, get_cfg80211_regdom()->alpha2);
++
++	if (err > 0)
++		wiphy_update_regulatory(&rdev->wiphy, NL80211_REGDOM_SET_BY_USER);
++	return err < 0 ? err : 0;
++}
++
+ static void update_all_wiphy_regulatory(enum nl80211_reg_initiator initiator)
+ {
+ 	struct cfg80211_registered_device *rdev;
+diff --git a/net/wireless/wext-core.c b/net/wireless/wext-core.c
+index bcdf24af3..35db8f823 100644
+--- a/net/wireless/wext-core.c
++++ b/net/wireless/wext-core.c
+@@ -24,6 +24,20 @@ typedef int (*wext_ioctl_func)(struct net_device *, struct iwreq *,
+ 			       unsigned int, struct iw_request_info *,
+ 			       iw_handler);
+ 
++static ATOMIC_NOTIFIER_HEAD(wireless_event_chain);
++
++int register_wireless_event_notifier(struct notifier_block *nb)
++{
++	return atomic_notifier_chain_register(&wireless_event_chain, nb);
++}
++EXPORT_SYMBOL_GPL(register_wireless_event_notifier);
++
++void unregister_wireless_event_notifier(struct notifier_block *nb)
++{
++	atomic_notifier_chain_unregister(&wireless_event_chain, nb);
++}
++EXPORT_SYMBOL_GPL(unregister_wireless_event_notifier);
++
+ 
+ /*
+  * Meta-data about all the standard Wireless Extension request we
+@@ -530,6 +544,14 @@ void wireless_send_event(struct net_device *	dev,
+ 	}
+ 
+ 	/* Total length of the event */
++	if (cmd == IWEVCUSTOM && extra_len) {
++		struct wireless_event_info info = {
++			.dev = dev, .wrqu = wrqu, .extra = extra,
++		};
++
++		atomic_notifier_call_chain(&wireless_event_chain, cmd, &info);
++	}
++
+ 	hdr_len = event_type_size[descr->header_type];
+ 	event_len = hdr_len + extra_len;
+ 

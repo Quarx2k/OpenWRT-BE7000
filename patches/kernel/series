@@ -18,3 +18,4 @@
 0018-Preserve-builtin-module-metadata-for-OpenWrt-kmodloader.patch
 0019-Support-OpenWrt-flowtable-flags-and-software-fallback.patch
 0020-Allow-atomic-replacement-of-active-flowtables.patch
+0021-Translate-QSDK-DFS-events-and-apply-country-settings.patch

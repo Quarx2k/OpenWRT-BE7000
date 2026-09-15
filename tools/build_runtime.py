@@ -86,6 +86,8 @@ def modules(work,k,b,cross,jobs):
     requested=dict(re.findall(r'^CONFIG_(\w+)=(y|m|n)$',(P/'configs/netfilter.config').read_text(),re.M))
     for option,value in requested.items():
         run(k/'scripts/config','--file',b/'.config',{'y':'--enable','m':'--module','n':'--disable'}[value],option)
+    # OpenWrt generates regulatory.db without a detached signature.
+    run(k/'scripts/config','--file',b/'.config','--enable','CFG80211_CERTIFICATION_ONUS','--disable','CFG80211_REQUIRE_SIGNED_REGDB')
     run(k/'scripts/config','--file',b/'.config','--module','NF_TABLES_SET','--module','NFT_FIB_IPV4','--module','NFT_FIB_IPV6','--module','NFT_FIB_INET','--module','NFT_QUEUE')
     run(*common,'olddefconfig')
     config=dict(re.findall(r'^CONFIG_(\w+)=(.+)$',(b/'.config').read_text(),re.M))
