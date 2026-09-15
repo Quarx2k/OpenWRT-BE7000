@@ -5,8 +5,18 @@
 #include <net/iw_handler.h>
 
 struct net;
+struct notifier_block;
+
+struct wireless_event_info {
+	struct net_device *dev;
+	const union iwreq_data *wrqu;
+	const char *extra;
+};
 
 #ifdef CONFIG_WEXT_CORE
+int register_wireless_event_notifier(struct notifier_block *nb);
+void unregister_wireless_event_notifier(struct notifier_block *nb);
+
 int wext_handle_ioctl(struct net *net, unsigned int cmd,
 		      void __user *arg);
 int compat_wext_handle_ioctl(struct net *net, unsigned int cmd,

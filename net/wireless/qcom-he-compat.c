@@ -27,6 +27,50 @@ bool qcom_he_compat_active(struct cfg80211_registered_device *rdev)
 	return be7000_he_compat && qcom_he_command(&rdev->wiphy);
 }
 
+bool qcom_dfs_compat_active(struct cfg80211_registered_device *rdev)
+{
+	return IS_ENABLED(CONFIG_WEXT_CORE) && qcom_he_command(&rdev->wiphy) &&
+	       rdev->ops->start_ap && !rdev->ops->start_radar_detection;
+}
+
+int qcom_reg_set_country(struct cfg80211_registered_device *rdev,
+			 const char alpha2[2])
+{
+	const struct wiphy_vendor_command *cmd;
+	struct wireless_dev *radio;
+	struct { struct nlattr attr; u32 value; } args[3] = {};
+	char *country = (char *)&args[2].value;
+	int i, err;
+
+	ASSERT_RTNL();
+	if (!qcom_dfs_compat_active(rdev) ||
+	    alpha2[0] < 'A' || alpha2[0] > 'Z' ||
+	    alpha2[1] < 'A' || alpha2[1] > 'Z' ||
+	    !memcmp(rdev->qcom_country, alpha2, 2))
+		return 0;
+	cmd = qcom_he_command(&rdev->wiphy);
+	list_for_each_entry(radio, &rdev->wiphy.wdev_list, list) {
+		if (!radio->netdev || radio->netdev->type != ARPHRD_IEEE80211)
+			continue;
+		for (i = 0; i < ARRAY_SIZE(args); i++) {
+			args[i].attr.nla_type = 17 + i;
+			args[i].attr.nla_len = sizeof(args[i]);
+		}
+		args[0].value = 236; /* QSDK COUNTRY_CONFIG */
+		args[2].attr.nla_len = NLA_HDRLEN + 3;
+		memcpy(country, alpha2, 2);
+		err = cmd->doit(&rdev->wiphy, radio, args, sizeof(args));
+		if (err)
+			return err;
+		memcpy(rdev->qcom_country, alpha2, 2);
+		pr_info("cfg80211: QSDK %s country %.2s applied\n",
+			radio->netdev->name, alpha2);
+		return 1;
+	}
+	/* The raw radio may not be registered yet during wiphy setup. */
+	return 0;
+}
+
 /* QSDK registers raw radio-control netdevs as wireless interfaces. Keep
  * them for direct vendor requests, but do not advertise them as usable VAPs.
  * Match raw AP controls only; Ethernet data and monitor VAPs stay visible.

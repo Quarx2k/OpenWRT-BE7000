@@ -656,6 +656,9 @@ int wiphy_register(struct wiphy *wiphy)
 	int i;
 	u16 ifmodes = wiphy->interface_modes;
 
+	if (qcom_dfs_compat_active(rdev))
+		wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_DFS_OFFLOAD);
+
 #ifdef CONFIG_PM
 	if (WARN_ON(wiphy->wowlan &&
 		    (wiphy->wowlan->flags & WIPHY_WOWLAN_GTK_REKEY_FAILURE) &&
@@ -1498,6 +1501,12 @@ static int __init cfg80211_init(void)
 		goto out_fail_wq;
 	}
 
+	err = qcom_dfs_init();
+	if (err) {
+		destroy_workqueue(cfg80211_wq);
+		goto out_fail_wq;
+	}
+
 	return 0;
 
 out_fail_wq:
@@ -1518,6 +1527,7 @@ fs_initcall(cfg80211_init);
 
 static void __exit cfg80211_exit(void)
 {
+	qcom_dfs_exit();
 	debugfs_remove(ieee80211_debugfs_dir);
 	nl80211_exit();
 	unregister_netdevice_notifier(&cfg80211_netdev_notifier);

@@ -37,6 +37,8 @@ struct cfg80211_registered_device {
 	 * If the AP is reconfigured this can also be used to tell us if
 	 * the country on the country IE changed. */
 	char country_ie_alpha2[2];
+	/* Last country passed to the QSDK radio, protected by RTNL. */
+	char qcom_country[2];
 
 	/*
 	 * the driver requests the regulatory core to set this regulatory

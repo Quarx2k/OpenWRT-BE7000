@@ -60,3 +60,4 @@ $(obj)/extra-certs.c: $(CONFIG_CFG80211_EXTRA_REGDB_KEYDIR:"%"=%) \
 clean-files += shipped-certs.c extra-certs.c
 
 cfg80211-y += qcom-he-compat.o
+cfg80211-y += qcom-dfs.o

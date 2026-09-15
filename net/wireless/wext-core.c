@@ -24,6 +24,20 @@ typedef int (*wext_ioctl_func)(struct net_device *, struct iwreq *,
 			       unsigned int, struct iw_request_info *,
 			       iw_handler);
 
+static ATOMIC_NOTIFIER_HEAD(wireless_event_chain);
+
+int register_wireless_event_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&wireless_event_chain, nb);
+}
+EXPORT_SYMBOL_GPL(register_wireless_event_notifier);
+
+void unregister_wireless_event_notifier(struct notifier_block *nb)
+{
+	atomic_notifier_chain_unregister(&wireless_event_chain, nb);
+}
+EXPORT_SYMBOL_GPL(unregister_wireless_event_notifier);
+
 
 /*
  * Meta-data about all the standard Wireless Extension request we
@@ -530,6 +544,14 @@ void wireless_send_event(struct net_device *	dev,
 	}
 
 	/* Total length of the event */
+	if (cmd == IWEVCUSTOM && extra_len) {
+		struct wireless_event_info info = {
+			.dev = dev, .wrqu = wrqu, .extra = extra,
+		};
+
+		atomic_notifier_call_chain(&wireless_event_chain, cmd, &info);
+	}
+
 	hdr_len = event_type_size[descr->header_type];
 	event_len = hdr_len + extra_len;
 

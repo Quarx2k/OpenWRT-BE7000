@@ -62,6 +62,7 @@
 #include "reg.h"
 #include "rdev-ops.h"
 #include "nl80211.h"
+#include "qcom-he-compat.h"
 
 /*
  * Grace period we give before making sure all current interfaces reside on
@@ -2235,6 +2236,10 @@ static void wiphy_update_regulatory(struct wiphy *wiphy,
 	}
 
 	lr->dfs_region = get_cfg80211_regdom()->dfs_region;
+	/* QSDK rebuilds channel entries here; apply cfg80211 limits afterwards. */
+	if (qcom_reg_set_country(wiphy_to_rdev(wiphy),
+				 get_cfg80211_regdom()->alpha2) < 0)
+		pr_warn_ratelimited("cfg80211: QSDK country update failed\n");
 
 	for (band = 0; band < NUM_NL80211_BANDS; band++)
 		handle_band(wiphy, initiator, wiphy->bands[band]);
@@ -2242,6 +2247,15 @@ static void wiphy_update_regulatory(struct wiphy *wiphy,
 	reg_process_beacons(wiphy);
 	reg_process_ht_flags(wiphy);
 	reg_call_notifier(wiphy, lr);
+}
+
+int qcom_reg_prepare_ap(struct cfg80211_registered_device *rdev)
+{
+	int err = qcom_reg_set_country(rdev, get_cfg80211_regdom()->alpha2);
+
+	if (err > 0)
+		wiphy_update_regulatory(&rdev->wiphy, NL80211_REGDOM_SET_BY_USER);
+	return err < 0 ? err : 0;
 }
 
 static void update_all_wiphy_regulatory(enum nl80211_reg_initiator initiator)

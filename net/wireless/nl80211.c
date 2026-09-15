@@ -4870,6 +4870,10 @@ static int nl80211_start_ap(struct sk_buff *skb, struct genl_info *info)
 			return -EINVAL;
 	}
 
+	err = qcom_reg_prepare_ap(rdev);
+	if (err)
+		return err;
+
 	if (info->attrs[NL80211_ATTR_WIPHY_FREQ]) {
 		err = nl80211_parse_chandef(rdev, info, &params.chandef);
 		if (err)
