@@ -1,0 +1,341 @@
+Subject: [PATCH] PCI: trace BE7000 CNSS binding before the WLAN probe
+
+Trace driver matching, runtime PM, DMA configuration and INTx mapping.
+Emit messages only for cnss_pci on xiaomi,be7000 with the external WLAN
+stack enabled. Do not change the probe sequence or error handling.
+
+--- a/drivers/base/dd.c
++++ b/drivers/base/dd.c
+@@ -22,6 +22,7 @@
+ #include <linux/dma-map-ops.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/kthread.h>
+ #include <linux/wait.h>
+ #include <linux/async.h>
+@@ -32,6 +33,17 @@
+ #include "base.h"
+ #include "power/power.h"
+ 
++static void be7000_cnss_trace(struct device *dev,
++			      const struct device_driver *drv,
++			      const char *stage, int value)
++{
++	if (IS_ENABLED(CONFIG_QCOM_BE7000_WLAN) &&
++	    !strcmp(drv->name, "cnss_pci") &&
++	    of_machine_is_compatible("xiaomi,be7000"))
++		dev_info(dev, "BE7000 PCI cpu=%u pid=%d %s value=%d\n",
++			 raw_smp_processor_id(), task_pid_nr(current), stage, value);
++}
++
+ /*
+  * Deferred Probe infrastructure.
+  *
+@@ -675,7 +687,9 @@
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	be7000_cnss_trace(dev, drv, "supplier check begin", 0);
+ 	link_ret = device_links_check_suppliers(dev);
++	be7000_cnss_trace(dev, drv, "supplier check end", link_ret);
+ 	if (link_ret == -EPROBE_DEFER)
+ 		return link_ret;
+ 
+@@ -688,32 +702,43 @@
+ 	}
+ 
+ re_probe:
++	be7000_cnss_trace(dev, drv, "set driver begin", 0);
+ 	device_set_driver(dev, drv);
+ 
+ 	/* If using pinctrl, bind pins now before probing */
++	be7000_cnss_trace(dev, drv, "pinctrl bind begin", 0);
+ 	ret = pinctrl_bind_pins(dev);
++	be7000_cnss_trace(dev, drv, "pinctrl bind end", ret);
+ 	if (ret)
+ 		goto pinctrl_bind_failed;
+ 
+ 	if (dev->bus->dma_configure) {
++		be7000_cnss_trace(dev, drv, "DMA configure begin", 0);
+ 		ret = dev->bus->dma_configure(dev);
++		be7000_cnss_trace(dev, drv, "DMA configure end", ret);
+ 		if (ret)
+ 			goto pinctrl_bind_failed;
+ 	}
+ 
++	be7000_cnss_trace(dev, drv, "driver sysfs begin", 0);
+ 	ret = driver_sysfs_add(dev);
++	be7000_cnss_trace(dev, drv, "driver sysfs end", ret);
+ 	if (ret) {
+ 		dev_err(dev, "%s: driver_sysfs_add failed\n", __func__);
+ 		goto sysfs_failed;
+ 	}
+ 
+ 	if (dev->pm_domain && dev->pm_domain->activate) {
++		be7000_cnss_trace(dev, drv, "PM domain activate begin", 0);
+ 		ret = dev->pm_domain->activate(dev);
++		be7000_cnss_trace(dev, drv, "PM domain activate end", ret);
+ 		if (ret)
+ 			goto probe_failed;
+ 	}
+ 
++	be7000_cnss_trace(dev, drv, "bus probe begin", 0);
+ 	ret = call_driver_probe(dev, drv);
++	be7000_cnss_trace(dev, drv, "bus probe end", ret);
+ 	if (ret) {
+ 		/*
+ 		 * If fw_devlink_best_effort is active (denoted by -EAGAIN), the
+@@ -838,6 +863,8 @@
+ {
+ 	int ret = 0;
+ 
++	be7000_cnss_trace(dev, drv, "driver probe enter", 0);
++
+ 	if (dev->p->dead || !device_is_registered(dev))
+ 		return -ENODEV;
+ 	if (dev->driver)
+@@ -867,15 +894,23 @@
+ 	dev_dbg(dev, "bus: '%s': %s: matched device with driver %s\n",
+ 		drv->bus->name, __func__, drv->name);
+ 
++	be7000_cnss_trace(dev, drv, "suppliers runtime PM begin", 0);
+ 	pm_runtime_get_suppliers(dev);
+-	if (dev->parent)
+-		pm_runtime_get_sync(dev->parent);
++	be7000_cnss_trace(dev, drv, "suppliers runtime PM end", 0);
++	if (dev->parent) {
++		be7000_cnss_trace(dev, drv, "parent runtime PM begin", 0);
++		ret = pm_runtime_get_sync(dev->parent);
++		be7000_cnss_trace(dev, drv, "parent runtime PM end", ret);
++	}
+ 
+-	pm_runtime_barrier(dev);
++	be7000_cnss_trace(dev, drv, "runtime PM barrier begin", 0);
++	ret = pm_runtime_barrier(dev);
++	be7000_cnss_trace(dev, drv, "runtime PM barrier end", ret);
+ 	if (initcall_debug)
+ 		ret = really_probe_debug(dev, drv);
+ 	else
+ 		ret = really_probe(dev, drv);
++	be7000_cnss_trace(dev, drv, "really_probe end", ret);
+ 	pm_request_idle(dev);
+ 
+ 	if (dev->parent)
+--- a/drivers/pci/pci-driver.c
++++ b/drivers/pci/pci-driver.c
+@@ -24,6 +24,17 @@
+ #include "pci.h"
+ #include "pcie/portdrv.h"
+ 
++static void be7000_cnss_trace(struct device *dev, const char *driver,
++			      const char *stage, int value)
++{
++	if (IS_ENABLED(CONFIG_QCOM_BE7000_WLAN) &&
++	    !strcmp(driver, "cnss_pci") &&
++	    of_machine_is_compatible("xiaomi,be7000"))
++		pr_info("BE7000 PCI cpu=%u pid=%d dev=%s %s value=%d\n",
++			raw_smp_processor_id(), task_pid_nr(current),
++			dev ? dev_name(dev) : driver, stage, value);
++}
++
+ struct pci_dynid {
+ 	struct list_head node;
+ 	struct pci_device_id id;
+@@ -328,9 +339,14 @@
+ 	 * count, in its probe routine and pm_runtime_get_noresume() in
+ 	 * its remove routine.
+ 	 */
+-	pm_runtime_get_sync(dev);
++	be7000_cnss_trace(dev, pci_drv->name, "endpoint runtime PM begin",
++			  pci_dev->current_state);
++	rc = pm_runtime_get_sync(dev);
++	be7000_cnss_trace(dev, pci_drv->name, "endpoint runtime PM end", rc);
+ 	pci_dev->driver = pci_drv;
++	be7000_cnss_trace(dev, pci_drv->name, "CNSS callback begin", 0);
+ 	rc = pci_drv->probe(pci_dev, ddi->id);
++	be7000_cnss_trace(dev, pci_drv->name, "CNSS callback end", rc);
+ 	if (!rc)
+ 		return rc;
+ 	if (rc < 0) {
+@@ -370,7 +386,9 @@
+ 	node = dev_to_node(&dev->dev);
+ 	dev->is_probed = 1;
+ 
++	be7000_cnss_trace(&dev->dev, drv->name, "CPU hotplug lock begin", node);
+ 	cpu_hotplug_disable();
++	be7000_cnss_trace(&dev->dev, drv->name, "CPU hotplug lock end", node);
+ 
+ 	/*
+ 	 * Prevent nesting work_on_cpu() for the case where a Virtual Function
+@@ -395,11 +413,13 @@
+ 		free_cpumask_var(wq_domain_mask);
+ 	}
+ 
++	be7000_cnss_trace(&dev->dev, drv->name, "probe dispatch begin", cpu);
+ 	if (cpu < nr_cpu_ids)
+ 		error = work_on_cpu(cpu, local_pci_probe, &ddi);
+ 	else
+ 		error = local_pci_probe(&ddi);
+ out:
++	be7000_cnss_trace(&dev->dev, drv->name, "probe dispatch end", error);
+ 	dev->is_probed = 0;
+ 	cpu_hotplug_enable();
+ 	return error;
+@@ -447,17 +467,25 @@
+ 	struct pci_dev *pci_dev = to_pci_dev(dev);
+ 	struct pci_driver *drv = to_pci_driver(dev->driver);
+ 
++	be7000_cnss_trace(dev, drv->name, "pci_device_probe enter", 0);
++
+ 	if (!pci_device_can_probe(pci_dev))
+ 		return -ENODEV;
+ 
++	be7000_cnss_trace(dev, drv->name, "assign IRQ begin", 0);
+ 	pci_assign_irq(pci_dev);
++	be7000_cnss_trace(dev, drv->name, "assign IRQ end", pci_dev->irq);
+ 
++	be7000_cnss_trace(dev, drv->name, "pcibios_alloc_irq begin", 0);
+ 	error = pcibios_alloc_irq(pci_dev);
++	be7000_cnss_trace(dev, drv->name, "pcibios_alloc_irq end", error);
+ 	if (error < 0)
+ 		return error;
+ 
+ 	pci_dev_get(pci_dev);
++	be7000_cnss_trace(dev, drv->name, "PCI probe match begin", 0);
+ 	error = __pci_device_probe(drv, pci_dev);
++	be7000_cnss_trace(dev, drv->name, "PCI probe match end", error);
+ 	if (error) {
+ 		pcibios_free_irq(pci_dev);
+ 		pci_dev_put(pci_dev);
+@@ -1448,6 +1476,10 @@
+ int __pci_register_driver(struct pci_driver *drv, struct module *owner,
+ 			  const char *mod_name)
+ {
++	int ret;
++
++	be7000_cnss_trace(NULL, drv->name, "register fields begin", 0);
++
+ 	/* initialize common driver fields */
+ 	drv->driver.name = drv->name;
+ 	drv->driver.bus = &pci_bus_type;
+@@ -1460,7 +1492,10 @@
+ 	INIT_LIST_HEAD(&drv->dynids.list);
+ 
+ 	/* register with core */
+-	return driver_register(&drv->driver);
++	be7000_cnss_trace(NULL, drv->name, "driver_register begin", 0);
++	ret = driver_register(&drv->driver);
++	be7000_cnss_trace(NULL, drv->name, "driver_register end", ret);
++	return ret;
+ }
+ EXPORT_SYMBOL(__pci_register_driver);
+ 
+@@ -1519,6 +1554,7 @@
+ static int pci_bus_match(struct device *dev, const struct device_driver *drv)
+ {
+ 	struct pci_dev *pci_dev = to_pci_dev(dev);
++	struct pci_dev *bridge;
+ 	struct pci_driver *pci_drv;
+ 	const struct pci_device_id *found_id;
+ 
+@@ -1526,7 +1562,22 @@
+ 		return 0;
+ 
+ 	pci_drv = (struct pci_driver *)to_pci_driver(drv);
++	be7000_cnss_trace(dev, drv->name, "PCI bus match begin", 0);
++	be7000_cnss_trace(dev, drv->name, "endpoint power state",
++			  pci_dev->current_state);
++	be7000_cnss_trace(dev, drv->name, "endpoint runtime state",
++			  dev->power.runtime_status);
++	bridge = pci_upstream_bridge(pci_dev);
++	if (bridge) {
++		be7000_cnss_trace(&bridge->dev, drv->name, "bridge power state",
++				  bridge->current_state);
++		be7000_cnss_trace(&bridge->dev, drv->name, "bridge runtime state",
++				  bridge->dev.power.runtime_status);
++		be7000_cnss_trace(&bridge->dev, drv->name, "bridge D3 allowed",
++				  bridge->bridge_d3);
++	}
+ 	found_id = pci_match_device(pci_drv, pci_dev);
++	be7000_cnss_trace(dev, drv->name, "PCI bus match end", !!found_id);
+ 	if (found_id)
+ 		return 1;
+ 
+@@ -1658,7 +1709,9 @@
+ 
+ 	if (IS_ENABLED(CONFIG_OF) && bridge->parent &&
+ 	    bridge->parent->of_node) {
++		be7000_cnss_trace(dev, driver->name, "of_dma_configure begin", 0);
+ 		ret = of_dma_configure(dev, bridge->parent->of_node, true);
++		be7000_cnss_trace(dev, driver->name, "of_dma_configure end", ret);
+ 	} else if (has_acpi_companion(bridge)) {
+ 		struct acpi_device *adev = to_acpi_device_node(bridge->fwnode);
+ 
+--- a/drivers/pci/irq.c
++++ b/drivers/pci/irq.c
+@@ -12,6 +12,7 @@
+ #include <linux/export.h>
+ #include <linux/interrupt.h>
+ #include <linux/pci.h>
++#include <linux/of.h>
+ 
+ #include "pci.h"
+ 
+@@ -145,6 +146,9 @@
+ 	u8 slot = -1;
+ 	int irq = 0;
+ 	struct pci_host_bridge *hbrg = pci_find_host_bridge(dev->bus);
++	bool trace = IS_ENABLED(CONFIG_QCOM_BE7000_WLAN) && dev->dev.driver &&
++		     !strcmp(dev->dev.driver->name, "cnss_pci") &&
++		     of_machine_is_compatible("xiaomi,be7000");
+ 
+ 	if (!(hbrg->map_irq)) {
+ 		pci_dbg(dev, "runtime IRQ mapping not provided by arch\n");
+@@ -158,13 +162,20 @@
+ 	 * time the interrupt line passes through a PCI-PCI bridge we must
+ 	 * apply the swizzle function.
+ 	 */
++	if (trace)
++		pci_info(dev, "BE7000 PCI IRQ pin read begin offset=0x%x\n",
++			 PCI_INTERRUPT_PIN);
+ 	pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
++	if (trace)
++		pci_info(dev, "BE7000 PCI IRQ pin read end pin=%u\n", pin);
+ 	/* Cope with illegal. */
+ 	if (pin > 4)
+ 		pin = 1;
+ 
+ 	if (pin) {
+ 		/* Follow the chain of bridges, swizzling as we go. */
++		if (trace)
++			pci_info(dev, "BE7000 PCI IRQ swizzle begin\n");
+ 		if (hbrg->swizzle_irq)
+ 			slot = (*(hbrg->swizzle_irq))(dev, &pin);
+ 
+@@ -172,7 +183,12 @@
+ 		 * If a swizzling function is not used, map_irq() must
+ 		 * ignore slot.
+ 		 */
++		if (trace)
++			pci_info(dev, "BE7000 PCI IRQ map begin slot=%u pin=%u\n",
++				 slot, pin);
+ 		irq = (*(hbrg->map_irq))(dev, slot, pin);
++		if (trace)
++			pci_info(dev, "BE7000 PCI IRQ map end irq=%d\n", irq);
+ 		if (irq == -1)
+ 			irq = 0;
+ 	}
+@@ -184,7 +200,12 @@
+ 	 * Always tell the device, so the driver knows what is the real IRQ
+ 	 * to use; the device does not use it.
+ 	 */
++	if (trace)
++		pci_info(dev, "BE7000 PCI IRQ line write begin offset=0x%x irq=%d\n",
++			 PCI_INTERRUPT_LINE, irq);
+ 	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
++	if (trace)
++		pci_info(dev, "BE7000 PCI IRQ line write end\n");
+ }
+ 
+ static bool pci_check_and_set_intx_mask(struct pci_dev *dev, bool mask)

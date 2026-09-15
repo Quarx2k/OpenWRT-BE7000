@@ -1,0 +1,120 @@
+From: BE7000 OpenWrt port
+Subject: regulator: qcom-smd: support IPQ9574 MP5496 RPM resources
+
+Keep the IPQ9574 resource table and boot votes separate from the generic
+MP5496 mapping. Resource s4 accepts RPM corner levels using the corn key.
+
+--- a/drivers/regulator/qcom_smd-regulator.c
++++ b/drivers/regulator/qcom_smd-regulator.c
+@@ -17,6 +17,7 @@
+ 	struct device *dev;
+ 	u32 type;
+ 	u32 id;
++	u32 voltage_key;
+ 
+ 	struct regulator_desc desc;
+ 
+@@ -37,6 +38,7 @@
+ 
+ #define RPM_KEY_SWEN	0x6e657773 /* "swen" */
+ #define RPM_KEY_UV	0x00007675 /* "uv" */
++#define RPM_KEY_CORN	0x6e726f63 /* "corn" */
+ #define RPM_KEY_MA	0x0000616d /* "ma" */
+ 
+ static int rpm_reg_write_active(struct qcom_rpm_reg *vreg)
+@@ -53,7 +55,7 @@
+ 	}
+ 
+ 	if (vreg->uv_updated && vreg->is_enabled) {
+-		req[reqlen].key = cpu_to_le32(RPM_KEY_UV);
++		req[reqlen].key = cpu_to_le32(vreg->voltage_key);
+ 		req[reqlen].nbytes = cpu_to_le32(sizeof(u32));
+ 		req[reqlen].value = cpu_to_le32(vreg->uV);
+ 		reqlen++;
+@@ -747,6 +749,34 @@
+ 	.ops = &rpm_smps_ldo_ops,
+ };
+ 
++static const struct regulator_desc ipq9574_mp5496_smpa1 = {
++	.linear_ranges = (struct linear_range[]) {
++		REGULATOR_LINEAR_RANGE(600000, 0, 37, 12500),
++	},
++	.n_linear_ranges = 1,
++	.n_voltages = 38,
++	.ops = &rpm_mp5496_ops,
++};
++
++static const struct regulator_desc ipq9574_mp5496_smpa2 = {
++	.linear_ranges = (struct linear_range[]) {
++		REGULATOR_LINEAR_RANGE(712500, 0, 22, 12500),
++	},
++	.n_linear_ranges = 1,
++	.n_voltages = 23,
++	.ops = &rpm_mp5496_ops,
++};
++
++/* IPQ9574 RPM exposes the MX supply as corner levels, not microvolts. */
++static const struct regulator_desc ipq9574_mp5496_smpa4 = {
++	.linear_ranges = (struct linear_range[]) {
++		REGULATOR_LINEAR_RANGE(1, 0, 8, 1),
++	},
++	.n_linear_ranges = 1,
++	.n_voltages = 9,
++	.ops = &rpm_mp5496_ops,
++};
++
+ static const struct regulator_desc mp5496_smps = {
+ 	.linear_ranges = (struct linear_range[]) {
+ 		REGULATOR_LINEAR_RANGE(600000, 0, 127, 12500),
+@@ -789,6 +819,15 @@
+ 	u32 id;
+ 	const struct regulator_desc *desc;
+ 	const char *supply;
++	int boot_uV;
++	u32 voltage_key;
++};
++
++static const struct rpm_regulator_data rpm_ipq9574_mp5496_regulators[] = {
++	{ "s1", QCOM_SMD_RPM_SMPA, 1, &ipq9574_mp5496_smpa1, "s1", 875000 },
++	{ "s2", QCOM_SMD_RPM_SMPA, 2, &ipq9574_mp5496_smpa2, "s2", 875000 },
++	{ "s4", QCOM_SMD_RPM_SMPA, 4, &ipq9574_mp5496_smpa4, "s4", 5, RPM_KEY_CORN },
++	{}
+ };
+ 
+ static const struct rpm_regulator_data rpm_mp5496_regulators[] = {
+@@ -1353,6 +1392,7 @@
+ };
+ 
+ static const struct of_device_id rpm_of_match[] = {
++	{ .compatible = "qcom,rpm-ipq9574-mp5496-regulators", .data = &rpm_ipq9574_mp5496_regulators },
+ 	{ .compatible = "qcom,rpm-mp5496-regulators", .data = &rpm_mp5496_regulators },
+ 	{ .compatible = "qcom,rpm-pm2250-regulators", .data = &rpm_pm2250_regulators },
+ 	{ .compatible = "qcom,rpm-pm6125-regulators", .data = &rpm_pm6125_regulators },
+@@ -1409,6 +1449,9 @@
+ 	vreg->dev	= dev;
+ 	vreg->type	= rpm_data->type;
+ 	vreg->id	= rpm_data->id;
++	/* Keep the QSDK boot vote until a consumer requests another level. */
++	vreg->uV	= rpm_data->boot_uV;
++	vreg->voltage_key = rpm_data->voltage_key ?: RPM_KEY_UV;
+ 
+ 	memcpy(&vreg->desc, rpm_data->desc, sizeof(vreg->desc));
+ 	vreg->desc.name = rpm_data->name;
+--- a/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/qcom,smd-rpm-regulator.yaml
+@@ -23,6 +23,7 @@
+   for each of the pmics below.
+ 
+   For mp5496, s1, s2, l2, l5
++  For ipq9574-mp5496, s1, s2, s4 (s4 uses RPM corner levels 1 through 9)
+ 
+   For pm2250, s1, s2, s3, s4, l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11,
+   l12, l13, l14, l15, l16, l17, l18, l19, l20, l21, l22
+@@ -86,6 +87,7 @@
+ properties:
+   compatible:
+     enum:
++      - qcom,rpm-ipq9574-mp5496-regulators
+       - qcom,rpm-mp5496-regulators
+       - qcom,rpm-pm2250-regulators
+       - qcom,rpm-pm6125-regulators

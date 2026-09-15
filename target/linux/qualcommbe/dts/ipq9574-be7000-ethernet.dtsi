@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/* Native PPE/QCA8084 Ethernet wiring for Xiaomi BE7000.
+ * QCA8084 package bindings:
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
+#include <dt-bindings/clock/qcom,qca8k-nsscc.h>
+#include <dt-bindings/net/qcom,qca808x.h>
+#include <dt-bindings/reset/qcom,qca8k-nsscc.h>
+
+/ {
+	aliases {
+		ethernet0 = &be7000_port1;
+		ethernet1 = &be7000_port2;
+		ethernet2 = &be7000_port3;
+		ethernet3 = &be7000_port4;
+	};
+	clocks {
+		qca8084_uniphy_125m: qca8084-uniphy-125m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <125000000>;
+		};
+		/* Equal rates, but distinct hardware inputs to the NSSCC muxes. */
+		qca8084_uniphy1_rx312p5m: qca8084-uniphy1-rx312p5m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <312500000>;
+		};
+		qca8084_uniphy1_tx312p5m: qca8084-uniphy1-tx312p5m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <312500000>;
+		};
+	};
+};
+
+/* All four external ports use PCS0; PCS1 and PCS2 are not connected. */
+&pcs1 {
+	status = "disabled";
+};
+
+&pcs2 {
+	status = "disabled";
+};
+
+&mdio {
+	pinctrl-0 = <&be7000_mdio_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	qca8k_nsscc: clock-controller@18 {
+		compatible = "qcom,qca8084-nsscc";
+		reg = <0x18>;
+		reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;
+		clocks = <&cmn_pll ETH0_50MHZ_CLK>,
+			 <&qca8084_uniphy_125m>, <&qca8084_uniphy_125m>,
+			 <&qca8084_uniphy_125m>, <&qca8084_uniphy_125m>,
+			 <&qca8084_uniphy1_rx312p5m>, <&qca8084_uniphy1_tx312p5m>;
+		#clock-cells = <1>;
+		#reset-cells = <1>;
+		#power-domain-cells = <1>;
+	};
+	ethernet-phy-package@1 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "qcom,qca8084-package";
+		reg = <1>;
+		clocks = <&qca8k_nsscc NSS_CC_APB_BRIDGE_CLK>,
+				 <&qca8k_nsscc NSS_CC_AHB_CLK>,
+				 <&qca8k_nsscc NSS_CC_SEC_CTRL_AHB_CLK>,
+				 <&qca8k_nsscc NSS_CC_TLMM_CLK>,
+				 <&qca8k_nsscc NSS_CC_TLMM_AHB_CLK>,
+				 <&qca8k_nsscc NSS_CC_CNOC_AHB_CLK>,
+				 <&qca8k_nsscc NSS_CC_MDIO_AHB_CLK>;
+		clock-names = "apb_bridge",
+					  "ahb",
+					  "sec_ctrl_ahb",
+					  "tlmm",
+					  "tlmm_ahb",
+					  "cnoc_ahb",
+					  "mdio_ahb";
+		resets = <&qca8k_nsscc NSS_CC_GEPHY_FULL_ARES>;
+		qcom,package-mode = <QCA808X_PCS1_10G_QXGMII_PCS0_UNUNSED>;
+		qcom,phy-addr-fixup = <1 2 3 4 5 6 7>;
+
+		be7000_phy1: ethernet-phy@1 {
+			compatible = "ethernet-phy-id004d.d180";
+			reg = <1>;
+			clocks = <&qca8k_nsscc NSS_CC_GEPHY0_SYS_CLK>;
+			resets = <&qca8k_nsscc NSS_CC_GEPHY0_SYS_ARES>;
+			qcom,xpcs-channel = <0>;
+		};
+
+		be7000_phy2: ethernet-phy@2 {
+			compatible = "ethernet-phy-id004d.d180";
+			reg = <2>;
+			clocks = <&qca8k_nsscc NSS_CC_GEPHY1_SYS_CLK>;
+			resets = <&qca8k_nsscc NSS_CC_GEPHY1_SYS_ARES>;
+			qcom,xpcs-channel = <1>;
+		};
+
+		be7000_phy3: ethernet-phy@3 {
+			compatible = "ethernet-phy-id004d.d180";
+			reg = <3>;
+			clocks = <&qca8k_nsscc NSS_CC_GEPHY2_SYS_CLK>;
+			resets = <&qca8k_nsscc NSS_CC_GEPHY2_SYS_ARES>;
+			qcom,xpcs-channel = <2>;
+		};
+
+		be7000_phy4: ethernet-phy@4 {
+			compatible = "ethernet-phy-id004d.d180";
+			reg = <4>;
+			clocks = <&qca8k_nsscc NSS_CC_GEPHY3_SYS_CLK>;
+			resets = <&qca8k_nsscc NSS_CC_GEPHY3_SYS_ARES>;
+			qcom,xpcs-channel = <3>;
+		};
+
+		pcs-phy@6 {
+			compatible = "qcom,qca8k-pcs-phy";
+			reg = <6>;
+			clocks = <&qca8k_nsscc NSS_CC_SRDS1_SYS_CLK>,
+					 <&qca8084_uniphy1_tx312p5m>,
+					 <&qca8084_uniphy1_rx312p5m>;
+			clock-names = "pcs", "pcs_rx_root", "pcs_tx_root";
+			resets = <&qca8k_nsscc NSS_CC_SRDS1_SYS_ARES>;
+		};
+
+		xpcs-phy@7 {
+			compatible = "qcom,qca8k-xpcs-phy";
+			reg = <7>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			resets = <&qca8k_nsscc NSS_CC_XPCS_ARES>;
+
+			channel@0 {
+				reg = <0>;
+				clocks = <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_XGMII_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_XGMII_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_GEPHY0_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_GEPHY0_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC1_RX_CLK_SRC>,
+						 <&qca8k_nsscc NSS_CC_MAC1_TX_CLK_SRC>;
+				clock-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx",
+							  "rx_src",
+							  "tx_src";
+				resets = <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_XGMII_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_XGMII_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC1_SRDS1_CH0_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC1_GEPHY0_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC1_GEPHY0_TX_ARES>;
+				reset-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx";
+			};
+
+			channel@1 {
+				reg = <1>;
+				clocks = <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_XGMII_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_XGMII_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_GEPHY1_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_GEPHY1_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC2_RX_CLK_SRC>,
+						 <&qca8k_nsscc NSS_CC_MAC2_TX_CLK_SRC>;
+				clock-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx",
+							  "rx_src",
+							  "tx_src";
+				resets = <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_XGMII_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_XGMII_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC2_SRDS1_CH1_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC2_GEPHY1_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC2_GEPHY1_TX_ARES>;
+				reset-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx";
+			};
+
+			channel@2 {
+				reg = <2>;
+				clocks = <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_XGMII_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_XGMII_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_GEPHY2_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_GEPHY2_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC3_RX_CLK_SRC>,
+						 <&qca8k_nsscc NSS_CC_MAC3_TX_CLK_SRC>;
+				clock-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx",
+							  "rx_src",
+							  "tx_src";
+				resets = <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_XGMII_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_XGMII_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC3_SRDS1_CH2_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC3_GEPHY2_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC3_GEPHY2_TX_ARES>;
+				reset-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx";
+			};
+
+			channel@3 {
+				reg = <3>;
+				clocks = <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_XGMII_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_XGMII_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_GEPHY3_RX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_GEPHY3_TX_CLK>,
+						 <&qca8k_nsscc NSS_CC_MAC4_RX_CLK_SRC>,
+						 <&qca8k_nsscc NSS_CC_MAC4_TX_CLK_SRC>;
+				clock-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx",
+							  "rx_src",
+							  "tx_src";
+				resets = <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_XGMII_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_XGMII_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_TX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC4_SRDS1_CH3_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC4_GEPHY3_RX_ARES>,
+						 <&qca8k_nsscc NSS_CC_MAC4_GEPHY3_TX_ARES>;
+				reset-names = "xgmii_rx",
+							  "xgmii_tx",
+							  "xpcs_rx",
+							  "xpcs_tx",
+							  "port_rx",
+							  "port_tx";
+			};
+		};
+	};
+};
+
+&qcom_ppe {
+	status = "okay";
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		be7000_port1: port@1 {
+			reg = <1>;
+			phy-mode = "10g-qxgmii";
+			managed = "in-band-status";
+			label = "eth0";
+			phy-handle = <&be7000_phy1>;
+			pcs-handle = <&pcs0_ch0>;
+			clocks = <&nsscc NSS_CC_PORT1_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT1_RX_CLK>,
+				 <&nsscc NSS_CC_PORT1_TX_CLK>;
+			clock-names = "port_mac", "port_rx", "port_tx";
+			resets = <&nsscc PORT1_MAC_ARES>,
+				 <&nsscc PORT1_RX_ARES>,
+				 <&nsscc PORT1_TX_ARES>;
+			reset-names = "port_mac", "port_rx", "port_tx";
+		};
+
+		be7000_port2: port@2 {
+			reg = <2>;
+			phy-mode = "10g-qxgmii";
+			managed = "in-band-status";
+			label = "eth1";
+			phy-handle = <&be7000_phy2>;
+			pcs-handle = <&pcs0_ch1>;
+			clocks = <&nsscc NSS_CC_PORT2_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT2_RX_CLK>,
+				 <&nsscc NSS_CC_PORT2_TX_CLK>;
+			clock-names = "port_mac", "port_rx", "port_tx";
+			resets = <&nsscc PORT2_MAC_ARES>,
+				 <&nsscc PORT2_RX_ARES>,
+				 <&nsscc PORT2_TX_ARES>;
+			reset-names = "port_mac", "port_rx", "port_tx";
+		};
+
+		be7000_port3: port@3 {
+			reg = <3>;
+			phy-mode = "10g-qxgmii";
+			managed = "in-band-status";
+			label = "eth2";
+			phy-handle = <&be7000_phy3>;
+			pcs-handle = <&pcs0_ch2>;
+			clocks = <&nsscc NSS_CC_PORT3_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT3_RX_CLK>,
+				 <&nsscc NSS_CC_PORT3_TX_CLK>;
+			clock-names = "port_mac", "port_rx", "port_tx";
+			resets = <&nsscc PORT3_MAC_ARES>,
+				 <&nsscc PORT3_RX_ARES>,
+				 <&nsscc PORT3_TX_ARES>;
+			reset-names = "port_mac", "port_rx", "port_tx";
+		};
+
+		be7000_port4: port@4 {
+			reg = <4>;
+			phy-mode = "10g-qxgmii";
+			managed = "in-band-status";
+			label = "eth3";
+			phy-handle = <&be7000_phy4>;
+			pcs-handle = <&pcs0_ch3>;
+			clocks = <&nsscc NSS_CC_PORT4_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT4_RX_CLK>,
+				 <&nsscc NSS_CC_PORT4_TX_CLK>;
+			clock-names = "port_mac", "port_rx", "port_tx";
+			resets = <&nsscc PORT4_MAC_ARES>,
+				 <&nsscc PORT4_RX_ARES>,
+				 <&nsscc PORT4_TX_ARES>;
+			reset-names = "port_mac", "port_rx", "port_tx";
+		};
+	};
+};

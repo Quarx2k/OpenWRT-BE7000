@@ -1,0 +1,70 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Start before procd so USB diagnostics also cover early userspace failures.
+set -uo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+
+log_dir=$1
+[[ -d $log_dir && -w $log_dir ]] || exit 1
+exec >>"$log_dir/logger.log" 2>&1
+log_pid=
+state_pid=
+trap 'kill ${log_pid:+"$log_pid"} ${state_pid:+"$state_pid"} 2>/dev/null || true' EXIT
+trap 'exit 0' HUP INT TERM
+
+network_state() {
+	local iface field
+	date -u
+	printf '\nUptime and online CPUs:\n'
+	cat /proc/uptime /sys/devices/system/cpu/online
+	printf '\nInterfaces:\n'
+	ip link show
+	cat /proc/net/dev
+	ip -4 address
+	ip route
+	cat /proc/net/arp
+	for iface in eth0 eth1 eth2 eth3 br-lan; do
+		[[ -d /sys/class/net/$iface ]] || continue
+		printf '\n%s:\n' "$iface"
+		for field in operstate carrier speed duplex brport/state; do
+			[[ -e /sys/class/net/$iface/$field ]] || continue
+			printf '%s: ' "$field"
+			cat "/sys/class/net/$iface/$field"
+		done
+	done
+	if [[ -S /var/run/ubus/ubus.sock ]]; then
+		printf '\nLAN service:\n'
+		ubus -t 2 call network.interface.lan status
+	fi
+	printf '\nProcesses:\n'
+	ps w
+}
+
+while :; do
+	# logd appears later in the boot; retry if its ubus connection goes away.
+	# logread flushes each message and rotates at 1 MiB, keeping one .old file.
+	if [[ -S /var/run/ubus/ubus.sock ]] &&
+		{ [[ -z $log_pid ]] || ! kill -0 "$log_pid" 2>/dev/null; }; then
+		/sbin/logread -f -l 10000 -F "$log_dir/system.log" -S 1024 &
+		log_pid=$!
+	fi
+
+	# Keep the previous complete snapshot if a read or write fails.
+	if dmesg -s 262144 >"$log_dir/kernel.new"; then
+		mv -f "$log_dir/kernel.new" "$log_dir/kernel.log"
+	fi
+	# A stuck network query must not stop kernel capture or start more queries.
+	if [[ -z $state_pid ]] || ! kill -0 "$state_pid" 2>/dev/null; then
+		(network_state >"$log_dir/state.new" 2>&1 &&
+			mv -f "$log_dir/state.new" "$log_dir/state.latest.txt" &&
+			fsync "$log_dir/state.latest.txt" "$log_dir") &
+		state_pid=$!
+	fi
+	fsync "$log_dir/kernel.log" "$log_dir/usb-init.log" "$log_dir"
+	if (( SECONDS < 120 )); then
+		sleep 5
+	else
+		sleep 30
+	fi
+done

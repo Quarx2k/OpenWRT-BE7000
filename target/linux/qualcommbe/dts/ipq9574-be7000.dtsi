@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/* BE7000 wiring and stock firmware memory reservations. */
+#include <dt-bindings/gpio/gpio.h>
+#include "ipq9574.dtsi"
+
+/ {
+	model = "Xiaomi BE7000";
+	compatible = "xiaomi,be7000", "qcom,ipq9574";
+	/* Xiaomi bootloader values for this IPQ9554 v1.1, in QSDK's LE format. */
+	cpu_type = [00 02 00 00];
+	soc_version_major = [01 00 00 00];
+	soc_version_minor = [01 00 00 00];
+	aliases {
+		led-boot = &led_sys_orange;
+		led-failsafe = &led_sys_orange;
+		led-running = &led_sys_white;
+		led-upgrade = &led_sys_orange;
+		serial0 = &blsp1_uart2;
+	};
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttyMSM0,115200n8 earlycon root=/dev/ram0 rdinit=/usr/libexec/be7000-usb-init maxcpus=4 be7000_printk=1 be7000_handoff=1 loglevel=7 pcie_pme=nomsi";
+		bootargs-append = " pcie_port_pm=off";
+	};
+	memory@40000000 {
+		reg = <0 0x40000000 0 0x40000000>;
+	};
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&leds_pins>;
+		pinctrl-names = "default";
+
+		led_sys_white: led-system-white {
+			label = "white:system";
+			gpios = <&tlmm 40 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led_sys_orange: led-system-orange {
+			label = "orange:system";
+			gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+
+		led-network-white {
+			label = "white:network";
+			gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-network-orange {
+			label = "orange:network";
+			gpios = <&tlmm 43 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-antenna-white {
+			label = "white:antenna";
+			gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+	reserved-memory {
+		tzapp@49b00000 { reg = <0 0x49b00000 0 0x600000>; no-map; };
+		/delete-node/ bootloader@4a000000;
+		bootloader@4a100000 { reg = <0 0x4a100000 0 0x400000>; no-map; };
+		q6_region: wcnss@4ab00000 { reg = <0 0x4ab00000 0 0x2b00000>; no-map; };
+		m3_dump: m3-dump@4d600000 { reg = <0 0x4d600000 0 0x100000>; no-map; };
+		q6_etr_region: q6-etr@4d700000 { reg = <0 0x4d700000 0 0x100000>; no-map; };
+		q6_caldb_region: q6-caldb@4d800000 { reg = <0 0x4d800000 0 0x500000>; no-map; };
+		rsvd1@4fa00000 { reg = <0 0x4fa00000 0 0x40000>; no-map; };
+		rsvd2@4fb00000 { reg = <0 0x4fb00000 0 0x40000>; no-map; };
+		qcn9224_pcie2: qcn9224-pcie2@54100000 { reg = <0 0x54100000 0 0x3200000>; no-map; };
+		qcn9224_pcie3: qcn9224-pcie3@57300000 { reg = <0 0x57300000 0 0x3200000>; no-map; };
+	};
+	regulator_3p3: regulator-3p3 {
+		compatible = "regulator-fixed";
+		regulator-name = "fixed_3p3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+	/* Stock leaves USB rails enabled without an RPM L5 resource. */
+	regulator_1p8: regulator-1p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "fixed_1p8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+	regulator_0p925: regulator-0p925 {
+		compatible = "regulator-fixed";
+		regulator-name = "fixed_0p925";
+		regulator-min-microvolt = <925000>;
+		regulator-max-microvolt = <925000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+};
+
+&xo_clk { clock-frequency = <48000000>; };
+&ref_48mhz_clk { clock-mult = <1>; clock-div = <1>; };
+&xo_board_clk { clock-mult = <1>; clock-div = <2>; };
+&sleep_clk { clock-frequency = <32000>; };
+
+&CPU0 { cpu-supply = <&ipq9574_s1>; };
+&CPU1 {
+	cpu-supply = <&ipq9574_s1>;
+	enable-method = "spin-table";
+	cpu-release-addr = <0 0x4fb3eff8>;
+};
+&CPU2 {
+	cpu-supply = <&ipq9574_s1>;
+	enable-method = "spin-table";
+	cpu-release-addr = <0 0x4fb3eff8>;
+};
+&CPU3 {
+	cpu-supply = <&ipq9574_s1>;
+	enable-method = "spin-table";
+	cpu-release-addr = <0 0x4fb3eff8>;
+};
+
+&rpm_requests {
+	regulators {
+		compatible = "qcom,rpm-ipq9574-mp5496-regulators";
+		ipq9574_s1: s1 {
+			regulator-min-microvolt = <587500>;
+			regulator-max-microvolt = <1075000>;
+			regulator-always-on;
+		};
+		ipq9574_s2: s2 {
+			regulator-min-microvolt = <700000>;
+			regulator-max-microvolt = <1000000>;
+			regulator-always-on;
+		};
+		ipq9574_s4: s4 {
+			regulator-min-microvolt = <1>;
+			regulator-max-microvolt = <9>;
+			regulator-always-on;
+		};
+	};
+};
+
+&blsp1_uart2 {
+	pinctrl-0 = <&uart2_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&usb_0_qusbphy {
+	vdd-supply = <&regulator_0p925>;
+	vdda-pll-supply = <&regulator_1p8>;
+	vdda-phy-dpdm-supply = <&regulator_3p3>;
+	status = "okay";
+};
+&usb_0_qmpphy {
+	vdda-pll-supply = <&regulator_1p8>;
+	vdda-phy-supply = <&regulator_0p925>;
+	status = "okay";
+};
+&usb3 { status = "okay"; };
+
+/* RAM/USB build: neither NAND nor SPI flash is exposed. */
+&tlmm {
+	leds_pins: leds-state {
+		pins = "gpio8", "gpio40", "gpio41", "gpio42", "gpio43";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+	uart2_pins: uart2-state {
+		pins = "gpio34", "gpio35";
+		function = "blsp2_uart";
+		drive-strength = <8>;
+		bias-disable;
+	};
+	be7000_mdio_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio38";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-disable;
+		};
+		mdio-pins {
+			pins = "gpio39";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+};

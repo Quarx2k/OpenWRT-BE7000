@@ -1,0 +1,73 @@
+From: BE7000 OpenWrt port
+Subject: kexec: pass the replacement kernel holding pen as a module parameter
+
+Keep the stock-kernel modules independent of the replacement Image. The USB
+image recipe supplies the final secondary_holding_pen address at module load.
+Reject an unset, unaligned or out-of-range address before initializing kexec.
+
+--- a/arch/arm64/secondary_park.h
++++ b/arch/arm64/secondary_park.h
+@@ -12,7 +12,7 @@
+ #define KEXEC_SECONDARY_PARK_CODE_PHYS	0x4fb3e000ULL
+ #define KEXEC_SECONDARY_RELEASE_PHYS	0x4fb3eff8ULL
+ #define KEXEC_SECONDARY_ACK_PHYS		0x4fb3f800ULL
+-#include "be7000_target.h"
++extern unsigned long kexec_secondary_holding_pen_phys;
+ #define KEXEC_SECONDARY_ACK_STRIDE	0x40UL
+ #define KEXEC_SECONDARY_PARK_WINDOW_SIZE	0x2000UL
+ 
+--- a/arch/arm64/secondary_park.c
++++ b/arch/arm64/secondary_park.c
+@@ -48,7 +48,7 @@ static void kexec_secondary_park_ipi(void *unused)
+ 
+ 	cpu_soft_restart(KEXEC_SECONDARY_PARK_CODE_PHYS,
+ 			 KEXEC_SECONDARY_RELEASE_PHYS, ack_phys,
+-			 KEXEC_SECONDARY_HOLDING_PEN_PHYS);
++			 kexec_secondary_holding_pen_phys);
+ }
+ 
+ static unsigned long kexec_secondary_ack_mask(unsigned long target_mask)
+--- a/arch/arm64/machine_kexec_drv.c
++++ b/arch/arm64/machine_kexec_drv.c
+@@ -12,6 +12,7 @@
+ #define MODULE_NAME "kexec_mod_arm64"
+ #define pr_fmt(fmt) MODULE_NAME ": " fmt
+ 
++#include <linux/errno.h>
+ #include <linux/module.h>
+ 
+ #include "machine_kexec_compat.h"
+@@ -22,12 +23,17 @@
+ MODULE_LICENSE("GPL v2");
+ MODULE_AUTHOR("Fabian Mastenbroek <mail.fabianm@gmail.com>");
+ MODULE_DESCRIPTION("Kexec backport as Kernel Module for ARM64");
+-MODULE_VERSION("1.10-be7000-spin-table-handoff");
++MODULE_VERSION("1.11-be7000-runtime-holding-pen");
+ MODULE_INFO(be7000_breadcrumb, "4.3");
+ MODULE_INFO(be7000_cpu_handoff, "physical-spin-table-v1");
+ MODULE_INFO(be7000_source_kernels, BE7000_SOURCE_KERNELS);
+ MODULE_INFO(be7000_spin_table,
+-	    BE7000_TARGET_SPIN_TABLE);
++	    "code-4fb3e000-release-4fb3eff8-entry-module-parameter");
++
++unsigned long kexec_secondary_holding_pen_phys;
++module_param_named(holding_pen, kexec_secondary_holding_pen_phys, ulong, 0400);
++MODULE_PARM_DESC(holding_pen,
++		 "Required physical secondary_holding_pen address from target-layout.json");
+ 
+ static int detect_el2 = 1;
+ module_param(detect_el2, int, 0);
+@@ -49,6 +55,13 @@ kexecmod_arm64_init(void)
+ {
+ 	int err;
+ 
++	if (kexec_secondary_holding_pen_phys < 0x42000000UL ||
++	    kexec_secondary_holding_pen_phys >= 0x49b00000UL ||
++	    (kexec_secondary_holding_pen_phys & 3)) {
++		pr_err("Set holding_pen to this Image's aligned physical CPU entry\n");
++		return -EINVAL;
++	}
++
+ 	/* Load compatibility layer */
+ 	if ((err = machine_kexec_compat_load(detect_el2, shim_hyp)) != 0) {
+ 		pr_err("Failed to load: %d\n", err);

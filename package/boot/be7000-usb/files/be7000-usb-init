@@ -1,0 +1,119 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# rdinit entry: the embedded native root remains available for recovery.
+set -Eeuo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+failed() {
+	trap - ERR
+	echo "BE7000: USB startup failed at line $1; entering recovery console." >/dev/kmsg
+	echo "BE7000: USB startup failed at line $1; initramfs console is available." >/dev/console
+	exec /bin/bash </dev/console >/dev/console 2>&1
+}
+trap 'failed "$LINENO"' ERR
+
+[[ -c /dev/kmsg ]] || mknod -m 600 /dev/kmsg c 1 11
+exec >/dev/kmsg 2>&1
+echo 'BE7000: native Linux 6.12 USB startup'
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+IFS= read -r -d '' compatible </sys/firmware/devicetree/base/compatible
+[[ $compatible == xiaomi,be7000 ]]
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /tmp /run /mnt/usb /mnt/owrt-system /mnt/owrt-data /mnt/owrt-root
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777 tmpfs /tmp
+mkdir -p /tmp/run /tmp/lock /tmp/log /tmp/state /tmp/.uci /tmp/sysinfo
+chmod 0700 /tmp/.uci
+exec </dev/console >/dev/kmsg 2>&1
+echo 'xiaomi,be7000' >/tmp/sysinfo/board_name
+echo 'Xiaomi BE7000' >/tmp/sysinfo/model
+
+usb_uuid=
+usb_dir=BE7000-OpenWrt-6.12
+read -r -a cmdline </proc/cmdline
+for arg in "${cmdline[@]}"; do
+	case "$arg" in
+		be7000_usb_uuid=*) usb_uuid=${arg#*=} ;;
+		be7000_usb_dir=*) usb_dir=${arg#*=} ;;
+	esac
+done
+[[ $usb_dir =~ ^[A-Za-z0-9._-]+$ && $usb_dir != . && $usb_dir != .. ]]
+
+# RPM handoff is complete; initialize the dataplane with all four CPUs online.
+for cpu in 1 2 3; do
+	[[ ! -e /sys/devices/system/cpu/cpu$cpu/online ]] || echo 1 >"/sys/devices/system/cpu/cpu$cpu/online"
+done
+cat /sys/devices/system/cpu/online
+
+# OpenWrt kmodloader loads this image's modules and resolves dependencies.
+# WLAN has no autoload entry: Q6 startup is tested after wired access is up.
+/sbin/kmodloader
+for attempt in {1..30}; do
+	for block in /sys/class/block/sd*; do
+		[[ -e $block ]] || continue
+		dev=/dev/${block##*/}
+		if [[ -n $usb_uuid ]]; then
+			[[ $(blkid -s UUID -o value "$dev" 2>/dev/null || true) == "$usb_uuid" ]] || continue
+		fi
+		if mount -o rw,noatime "$dev" /mnt/usb 2>/dev/null; then
+			if [[ -s /mnt/usb/$usb_dir/system.img && -s /mnt/usb/$usb_dir/userdata.img ]]; then
+				break 2
+			fi
+			umount /mnt/usb
+		fi
+	done
+	sleep 1
+done
+base=/mnt/usb/$usb_dir
+[[ -s $base/system.img && -s $base/userdata.img ]]
+boot_id=$(</proc/sys/kernel/random/boot_id)
+log_dir="$base/logs/openwrt-$boot_id"
+mkdir -p -m 0700 "$log_dir"
+ln -sfn "openwrt-$boot_id" "$base/logs/latest"
+exec > >(tee -a "$log_dir/usb-init.log" >/dev/kmsg) 2>&1
+echo "BE7000: USB root $base"
+cat /proc/cmdline >"$base/logs/last-cmdline.txt"
+cat /proc/cmdline >"$log_dir/cmdline.txt"
+printf '%s\n' "$boot_id" >"$log_dir/boot-id.txt"
+uname -a >"$log_dir/uname.txt"
+/usr/libexec/be7000-usb-log "$log_dir" </dev/null &
+
+check_ext4() {
+	local rc=0
+	e2fsck -p "$1" || rc=$?
+	(( rc <= 1 ))
+}
+sysloop=$(losetup -f)
+losetup "$sysloop" "$base/system.img"
+check_ext4 "$sysloop"
+losetup -d "$sysloop"
+losetup -r "$sysloop" "$base/system.img"
+mount -t ext4 -o ro "$sysloop" /mnt/owrt-system
+dataloop=$(losetup -f)
+losetup "$dataloop" "$base/userdata.img"
+check_ext4 "$dataloop"
+mount -t ext4 -o rw,noatime "$dataloop" /mnt/owrt-data
+[[ $(</mnt/owrt-system/etc/be7000-system-id) == $(</mnt/owrt-data/base-id) ]]
+[[ -d /mnt/owrt-data/upper && -d /mnt/owrt-data/work ]]
+mount -t overlay overlay -o lowerdir=/mnt/owrt-system,upperdir=/mnt/owrt-data/upper,workdir=/mnt/owrt-data/work /mnt/owrt-root
+[[ -x /mnt/owrt-root/sbin/procd ]]
+for name in proc sys dev tmp; do
+	mount --bind "/$name" "/mnt/owrt-root/$name"
+done
+mount --bind /dev/pts /mnt/owrt-root/dev/pts
+mount --bind /mnt/usb /mnt/owrt-root/mnt/usb
+mount --bind /mnt/owrt-system /mnt/owrt-root/rom
+mount --bind /mnt/owrt-data /mnt/owrt-root/overlay
+if [[ -d $base/device/calibration ]]; then
+	mount --bind "$base/device/calibration" /mnt/owrt-root/opt/be7000/calibration
+fi
+
+echo "$sysloop $dataloop" >/tmp/be7000-root-loops
+echo 'BE7000: USB_OVERLAY_READY'
+chroot /mnt/owrt-root /bin/config_generate
+cp /mnt/owrt-root/etc/config/network "$log_dir/network.config" || true
+cp /mnt/owrt-root/etc/board.json "$log_dir/board.json" || true
+echo 'BE7000: NETWORK_CONFIG_READY'
+exec chroot /mnt/owrt-root /sbin/procd -d 2

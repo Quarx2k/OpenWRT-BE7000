@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/* BE7000 firmware memory and SMP2P wiring, native OpenWrt secure PIL binding. */
+&gcc {
+	/* PAS owns these WCSS gates; exclude them from unused-clock cleanup. */
+	protected-clocks = <GCC_Q6_AHB_CLK>,
+		<GCC_Q6_AHB_S_CLK>,
+		<GCC_WCSS_ECAHB_CLK>,
+		<GCC_WCSS_ACMT_CLK>,
+		<GCC_SYS_NOC_WCSS_AHB_CLK>,
+		<GCC_ANOC_WCSS_AXI_M_CLK>,
+		<GCC_Q6SS_ATBM_CLK>,
+		<GCC_WCSS_DBG_IFC_ATB_CLK>,
+		<GCC_Q6_TSCTR_1TO2_CLK>,
+		<GCC_WCSS_DBG_IFC_NTS_CLK>,
+		<GCC_Q6SS_PCLKDBG_CLK>,
+		<GCC_Q6SS_TRIG_CLK>,
+		<GCC_WCSS_DBG_IFC_APB_CLK>,
+		<GCC_WCSS_DBG_IFC_DAPBUS_CLK>,
+		<GCC_Q6_AXIM_CLK>,
+		<GCC_WCSS_Q6_TBU_CLK>,
+		<GCC_MEM_NOC_Q6_AXI_CLK>,
+		<GCC_Q6SS_BOOT_CLK>;
+};
+
+&soc {
+	q6v5_wcss: remoteproc@cd00000 {
+		compatible = "qcom,ipq9574-wcss-sec-pil";
+		reg = <0x0cd00000 0x4040>, <0x0cb50000 0x8>;
+		reg-names = "qdsp6", "wcmn";
+		firmware-name = "IPQ9574/q6_fw.mdt", "IPQ9574/m3_fw.mdt";
+		interrupts-extended = <&intc GIC_SPI 325 IRQ_TYPE_EDGE_RISING>,
+			<&wcss_smp2p_in 0 0>, <&wcss_smp2p_in 1 0>,
+			<&wcss_smp2p_in 2 0>, <&wcss_smp2p_in 3 0>;
+		interrupt-names = "wdog", "fatal", "ready", "handover", "stop-ack";
+		qcom,smem-states = <&wcss_smp2p_out 0>, <&wcss_smp2p_out 1>;
+		qcom,smem-state-names = "shutdown", "stop";
+		memory-region = <&q6_region>, <&m3_dump>, <&q6_etr_region>, <&q6_caldb_region>;
+		glink-edge {
+			interrupts = <GIC_SPI 321 IRQ_TYPE_EDGE_RISING>;
+			qcom,remote-pid = <1>;
+			mboxes = <&apcs_glb 8>;
+		};
+	};
+};

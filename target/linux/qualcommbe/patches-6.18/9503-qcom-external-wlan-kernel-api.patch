@@ -1,0 +1,40 @@
+Subject: [PATCH] qcom: provide native kernel services for external AP WLAN
+
+Select the native QMI/remoteproc services and export physical trace cache maintenance
+only for the external WLAN package. The WCSS driver is built by that package.
+
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -128,6 +128,19 @@
+ 	tristate
+ 	depends on NET
+ 
++config QCOM_BE7000_WLAN
++	bool "Qualcomm external AP WLAN platform dependencies"
++	depends on ARM64 && ARCH_QCOM && NET && CFG80211 && QCOM_SMEM && REMOTEPROC
++	select QCOM_QMI_HELPERS
++	select QCOM_MDT_LOADER
++	select QCOM_PIL_INFO
++	select QCOM_Q6V5_COMMON
++	select QCOM_RPROC_COMMON
++	select QCOM_SCM
++	select WIRELESS_EXT
++	help
++	  Enable the native services used by the external BE7000 AP driver.
++
+ config QCOM_RAMP_CTRL
+ 	tristate "Qualcomm Ramp Controller driver"
+ 	depends on ARCH_QCOM || COMPILE_TEST
+--- a/arch/arm64/mm/flush.c
++++ b/arch/arm64/mm/flush.c
+@@ -15,6 +15,10 @@
+ #include <asm/cache.h>
+ #include <asm/tlbflush.h>
+ 
++#if IS_ENABLED(CONFIG_QCOM_BE7000_WLAN)
++EXPORT_SYMBOL_GPL(dcache_clean_inval_poc);
++#endif
++
+ void sync_icache_aliases(unsigned long start, unsigned long end)
+ {
+ 	if (icache_is_aliasing()) {

@@ -1,0 +1,54 @@
+Subject: [PATCH] net: phy: trace BE7000 copper and PCS link changes
+
+Record PHY link notifications and each PCS channel's initial in-band
+status and subsequent changes for the BE7000 native Ethernet test.
+Keep these diagnostics restricted to the BE7000 device tree compatible.
+
+--- a/drivers/net/phy/qcom/qca808x.c
++++ b/drivers/net/phy/qcom/qca808x.c
+@@ -979,6 +979,10 @@ static void qca8084_link_change_notify(struct phy_device *phydev)
+ 	struct qca808x_shared_priv *shared_priv;
+ 	int ret;
+ 
++	if (of_machine_is_compatible("xiaomi,be7000"))
++		phydev_info(phydev, "BE7000 PHY link=%d speed=%d duplex=%d\n",
++			    phydev->link, phydev->speed, phydev->duplex);
++
+ 	/* Assert the FIFO between PHY and MAC. */
+ 	ret = phy_modify(phydev, QCA8084_FIFO_CONTROL,
+ 			 QCA8084_FIFO_MAC_2_PHY | QCA8084_FIFO_PHY_2_MAC,
+--- a/drivers/net/pcs/pcs-qcom-ipq9574.c
++++ b/drivers/net/pcs/pcs-qcom-ipq9574.c
+@@ -133,6 +133,9 @@ struct ipq_pcs_mii {
+ 	struct clk *rx_clk;
+ 	/* TX clock from NSSCC to PCS MII */
+ 	struct clk *tx_clk;
++
++	unsigned int last_an_status;
++	bool an_status_logged;
+ };
+ 
+ /* PCS private data */
+@@ -224,5 +227,6 @@ static void ipq_pcs_get_state_usxgmii(struct ipq_pcs *qpcs, int index,
+ 				      struct phylink_link_state *state)
+ {
++	struct ipq_pcs_mii *mii = qpcs->qpcs_mii[index];
+ 	unsigned int reg, val;
+ 	int ret;
+ 
+@@ -232,6 +236,15 @@ static void ipq_pcs_get_state_usxgmii(struct ipq_pcs *qpcs, int index,
+ 		return;
+ 	}
+ 
++	if (of_machine_is_compatible("xiaomi,be7000") &&
++	    (!mii->an_status_logged || mii->last_an_status != val)) {
++		dev_info(qpcs->dev,
++			 "BE7000 PCS%d AN status=0x%04x link=%u\n",
++			 index, val, !!(val & XPCS_USXG_AN_LINK_STS));
++		mii->last_an_status = val;
++		mii->an_status_logged = true;
++	}
++
+ 	state->link = !!(val & XPCS_USXG_AN_LINK_STS);
+ 
+ 	if (!state->link)

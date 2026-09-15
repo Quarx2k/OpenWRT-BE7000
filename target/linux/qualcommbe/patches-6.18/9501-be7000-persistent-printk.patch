@@ -1,0 +1,231 @@
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 8185979..86dc584 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -332,6 +332,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	arm64_memblock_init();
+ 
++	be7000_printk_init();
+ 	paging_init();
+ 
+ 	acpi_table_upgrade();
+diff --git a/include/linux/printk.h b/include/linux/printk.h
+index a6c6fd1..49a66d9 100644
+--- a/include/linux/printk.h
++++ b/include/linux/printk.h
+@@ -14,6 +14,12 @@ struct console;
+ extern const char linux_banner[];
+ extern const char linux_proc_banner[];
+ 
++#ifdef CONFIG_BE7000_PRINTK_PERSIST
++void __init be7000_printk_init(void);
++#else
++static inline void be7000_printk_init(void) { }
++#endif
++
+ extern int oops_in_progress;	/* If set, an oops, panic(), BUG() or die() is in progress */
+ 
+ #define PRINTK_MAX_SINGLE_HEADER_LEN 2
+diff --git a/kernel/printk/be7000_persist.h b/kernel/printk/be7000_persist.h
+new file mode 100644
+index 0000000..8c2cfcc
+--- /dev/null
++++ b/kernel/printk/be7000_persist.h
+@@ -0,0 +1,149 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Included by printk.c: KXLG v1, retained across the Xiaomi kexec path. */
++#ifdef CONFIG_BE7000_PRINTK_PERSIST
++#include <linux/io.h>
++#include <linux/libfdt.h>
++#include <linux/memblock.h>
++#include <linux/of_fdt.h>
++#include <asm/early_ioremap.h>
++
++#define BE7000_LOG_PHYS 0x4fa00000ULL
++#define BE7000_LOG_SIZE 0x40000
++#define BE7000_LOG_DATA 0x40
++#define BE7000_LOG_CAPACITY (BE7000_LOG_SIZE - BE7000_LOG_DATA)
++
++static bool be7000_log_enabled __initdata;
++static void __iomem *be7000_log_base;
++static DEFINE_RAW_SPINLOCK(be7000_log_lock);
++static u32 be7000_log_pos, be7000_log_wraps;
++static u64 be7000_log_total;
++
++static int __init be7000_printk_setup(char *str)
++{
++	return kstrtobool(str, &be7000_log_enabled);
++}
++early_param("be7000_printk", be7000_printk_setup);
++
++/* Never wait on a recursive/NMI writer or call printk while holding this lock. */
++static void be7000_printk_store(const char *text, unsigned int len)
++{
++	u8 __iomem *base, *header;
++	unsigned long flags;
++	unsigned int i;
++
++	if (!READ_ONCE(be7000_log_base) ||
++	    !raw_spin_trylock_irqsave(&be7000_log_lock, flags))
++		return;
++	base = be7000_log_base;
++	header = base + 0x20;
++	for (i = 0; i <= len; i++) {
++		writeb_relaxed(i == len ? '\n' : text[i],
++			       base + BE7000_LOG_DATA + be7000_log_pos);
++		if (++be7000_log_pos == BE7000_LOG_CAPACITY) {
++			be7000_log_pos = 0;
++			be7000_log_wraps++;
++		}
++	}
++	be7000_log_total += len + 1;
++	dsb(sy);
++	writel_relaxed(be7000_log_pos, header + 8);
++	writel_relaxed(be7000_log_wraps, header + 12);
++	writeq_relaxed(be7000_log_total, header + 16);
++	dsb(sy);
++	raw_spin_unlock_irqrestore(&be7000_log_lock, flags);
++}
++
++static bool __init be7000_printk_reserved(void)
++{
++	const void *fdt = initial_boot_params;
++	struct memblock_region *region;
++	const fdt32_t *reg;
++	int parent, node, len;
++	bool found = false;
++
++	if (!fdt || !of_flat_dt_is_compatible(of_get_flat_dt_root(), "xiaomi,be7000"))
++		return false;
++	parent = fdt_path_offset(fdt, "/reserved-memory");
++	if (parent < 0)
++		return false;
++	reg = fdt_getprop(fdt, parent, "#address-cells", &len);
++	if (!reg || len != 4 || fdt32_to_cpu(*reg) != 2)
++		return false;
++	reg = fdt_getprop(fdt, parent, "#size-cells", &len);
++	if (!reg || len != 4 || fdt32_to_cpu(*reg) != 2)
++		return false;
++	fdt_for_each_subnode(node, fdt, parent) {
++		reg = fdt_getprop(fdt, node, "reg", &len);
++		if (reg && len == 16 && !fdt32_to_cpu(reg[0]) &&
++		    fdt32_to_cpu(reg[1]) == BE7000_LOG_PHYS && !fdt32_to_cpu(reg[2]) &&
++		    fdt32_to_cpu(reg[3]) == BE7000_LOG_SIZE &&
++		    fdt_getprop(fdt, node, "no-map", NULL)) {
++			found = true;
++			break;
++		}
++	}
++	if (!found)
++		return false;
++	for_each_mem_region(region) {
++		if (region->base < BE7000_LOG_PHYS + BE7000_LOG_SIZE &&
++		    region->base + region->size > BE7000_LOG_PHYS &&
++		    !memblock_is_nomap(region))
++			return false;
++	}
++	return true;
++}
++
++void __init be7000_printk_init(void)
++{
++	static char text[PRINTK_MESSAGE_MAX] __initdata;
++	struct printk_info info;
++	struct printk_record record;
++	u8 __iomem *base, *header;
++	u64 seq;
++
++	if (!be7000_log_enabled || !be7000_printk_reserved())
++		return;
++	base = early_ioremap(BE7000_LOG_PHYS, BE7000_LOG_SIZE);
++	if (!base)
++		return;
++	header = base + 0x20;
++	writel_relaxed(0, header);
++	dsb(sy);
++	writel_relaxed(1, header + 4);
++	writel_relaxed(0, header + 8);
++	writel_relaxed(0, header + 12);
++	writeq_relaxed(0, header + 16);
++	writel_relaxed(BE7000_LOG_CAPACITY, header + 24);
++	writel_relaxed(0, header + 28);
++	dsb(sy);
++	writel_relaxed(0x474c584b, header);
++	dsb(sy);
++	WRITE_ONCE(be7000_log_base, base);
++	prb_rec_init_rd(&record, &info, text, sizeof(text));
++	prb_for_each_record(0, prb, seq, &record)
++		be7000_printk_store(text, min_t(unsigned int, info.text_len, sizeof(text)));
++	pr_info("BE7000 KXLG v1: early persistent printk active\n");
++}
++
++static int __init be7000_printk_remap(void)
++{
++	void __iomem *base, *early;
++	unsigned long flags;
++
++	if (!be7000_log_base)
++		return 0;
++	base = ioremap(BE7000_LOG_PHYS, BE7000_LOG_SIZE);
++	if (!base)
++		return -ENOMEM;
++	raw_spin_lock_irqsave(&be7000_log_lock, flags);
++	early = be7000_log_base;
++	WRITE_ONCE(be7000_log_base, base);
++	raw_spin_unlock_irqrestore(&be7000_log_lock, flags);
++	early_iounmap(early, BE7000_LOG_SIZE);
++	pr_info("BE7000 KXLG: permanent mapping active\n");
++	return 0;
++}
++early_initcall(be7000_printk_remap);
++#else
++static inline void be7000_printk_store(const char *text, unsigned int len) { }
++#endif
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index 3a91b73..bef3d1c 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -2218,6 +2218,8 @@ static u16 printk_sprint(char *text, u16 size, int facility,
+ 	return text_len;
+ }
+ 
++#include "be7000_persist.h"
++
+ __printf(4, 0)
+ int vprintk_store(int facility, int level,
+ 		  const struct dev_printk_info *dev_info,
+@@ -2278,6 +2280,7 @@ int vprintk_store(int facility, int level,
+ 		if (prb_reserve_in_last(&e, prb, &r, caller_id, PRINTKRB_RECORD_MAX)) {
+ 			text_len = printk_sprint(&r.text_buf[r.info->text_len], reserve_size,
+ 						 facility, &flags, fmt, args);
++			be7000_printk_store(&r.text_buf[r.info->text_len], text_len);
+ 			r.info->text_len += text_len;
+ 
+ 			if (flags & LOG_NEWLINE) {
+@@ -2312,6 +2315,7 @@ int vprintk_store(int facility, int level,
+ 	if (trunc_msg_len)
+ 		memcpy(&r.text_buf[text_len], trunc_msg, trunc_msg_len);
+ 	r.info->text_len = text_len + trunc_msg_len;
++	be7000_printk_store(r.text_buf, r.info->text_len);
+ 	r.info->facility = facility;
+ 	r.info->level = level & 7;
+ 	r.info->flags = flags & 0x1f;
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index 5a6415c..c229049 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -1,6 +1,13 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ menu "Kernel hacking"
+ 
++config BE7000_PRINTK_PERSIST
++	bool "BE7000 persistent KXLG printk ring"
++	depends on ARM64 && OF && PRINTK
++	help
++	  Record early printk in Xiaomi reserved RAM at 0x4fa00000.
++	  Enable with be7000_printk=1 and reserve the exact no-map range.
++
+ menu "printk and dmesg options"
+ 
+ config PRINTK_TIME

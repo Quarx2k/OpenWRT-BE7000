@@ -1,0 +1,19 @@
+#!/bin/bash
+
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+case "$(board_name)" in
+xiaomi,be7000)
+	ucidef_set_led_default "sys_white" "System (white)" "white:system" "1"
+	ucidef_set_led_default "sys_orange" "System (orange)" "orange:system" "0"
+	ucidef_set_led_default "net_white" "Network (white)" "white:network" "0"
+	ucidef_set_led_default "net_orange" "Network (orange)" "orange:network" "0"
+	ucidef_set_led_default "iot_white" "IoT / antenna (white)" "white:antenna" "0"
+	;;
+esac
+
+board_config_flush
+
+exit 0

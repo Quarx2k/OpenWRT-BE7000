@@ -1,0 +1,33 @@
+Subject: [PATCH] net: phy: qca8084: forward PHY link status to XPCS
+
+Enable PHY mode control on every QXGMII channel, as in the Qualcomm
+qca-nss-phy driver. This synchronizes the copper PHY link information to
+XPCS for the in-band status consumed by the MAC-side PCS.
+
+--- a/drivers/net/phy/qcom/qca8084_serdes.c
++++ b/drivers/net/phy/qcom/qca8084_serdes.c
+@@ -110,6 +110,9 @@
+ #define PCS_SPEED_100				BIT(13)
+ #define PCS_SPEED_10				0
+ 
++#define MII_DIG_CONTROL1			0x8000
++#define MII_PHY_MODE_CONTROL_EN		BIT(0)
++
+ #define DIG_CONTROL2				0x8001
+ #define MII_BIT_CONTROL				BIT(8)
+ #define TX_CONFIG				BIT(3)
+@@ -498,6 +501,14 @@ static int qca8084_xpcs_set_mode(struct mdio_device *xpcs_mdiodev)
+ 					 TX_IPG_CHECK_DISABLE);
+ 		if (ret)
+ 			return ret;
++
++		/* Forward the PHY link state to this XPCS channel. */
++		ret = mdiodev_c45_modify(xpcs_mdiodev, qca8084_xpcs_ch_mmd[i],
++					 MII_DIG_CONTROL1,
++					 MII_PHY_MODE_CONTROL_EN,
++					 MII_PHY_MODE_CONTROL_EN);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	/* Check EEE capability supported or not */
