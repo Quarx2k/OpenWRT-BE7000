@@ -2,4 +2,4 @@ Upstream: https://git.codelinaro.org/clo/qsdk/oss/kernel/linux-ipq-5.4.git
 Upstream commit: 795dd148d092fb4c5fdeb766e66737615430048f
 Branch: kernel-qsdk-12.1-r5
 Import commit: 2ba00af1fb3150f2d7e32f7060fb0210637008fa
-Patched commit: 84f917c0fdaed8e30c721877a9b0331230288373
+Patched commit: 56a5a6d38fde1ae33e78d09120b225748fab361e
