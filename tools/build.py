@@ -11,7 +11,7 @@ P=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(P/'installer'))
 from kernel_profiles import PROFILES, render_script
 from storage import USERDATA_SIZES
-VERSION='1.0.3'
+VERSION='1.0.4'
 REPO='https://github.com/Quarx2k/OpenWRT-BE7000.git'
 KERNEL='6347d76e71d61a43f8893478479f33cb0f2bc240'
 STOCK='65a4446d0e6c21d084ca69317641515da4bd22aa'
