@@ -1,0 +1,31 @@
+From 6347d76e71d61a43f8893478479f33cb0f2bc240 Mon Sep 17 00:00:00 2001
+From: Quarx2k <agent00791@gmail.com>
+Date: Wed, 16 Sep 2026 17:09:33 +0600
+Subject: [PATCH] Handle inherited watchdog during early boot
+
+---
+ drivers/watchdog/qcom-wdt.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/watchdog/qcom-wdt.c b/drivers/watchdog/qcom-wdt.c
+index 68534d5b0..377c11d46 100644
+--- a/drivers/watchdog/qcom-wdt.c
++++ b/drivers/watchdog/qcom-wdt.c
+@@ -361,6 +361,14 @@ static int qcom_wdt_probe(struct platform_device *pdev)
+ 	wdt->wdd.timeout = min(wdt->wdd.max_timeout, 32U);
+ 	watchdog_init_timeout(&wdt->wdd, 0, dev);
+ 
++	/*
++	 * Hand the running timer to the core until userspace takes over.
++	 */
++	if (readl(wdt_addr(wdt, WDT_EN)) & QCOM_WDT_ENABLE) {
++		qcom_wdt_start(&wdt->wdd);
++		set_bit(WDOG_HW_RUNNING, &wdt->wdd.status);
++	}
++
+ 	ret = devm_watchdog_register_device(dev, &wdt->wdd);
+ 	if (ret)
+ 		return ret;
+-- 
+2.43.0
+

@@ -88,6 +88,8 @@ def modules(work,k,b,cross,jobs):
         run(k/'scripts/config','--file',b/'.config',{'y':'--enable','m':'--module','n':'--disable'}[value],option)
     # OpenWrt generates regulatory.db without a detached signature.
     run(k/'scripts/config','--file',b/'.config','--enable','CFG80211_CERTIFICATION_ONUS','--disable','CFG80211_REQUIRE_SIGNED_REGDB')
+    # Feed the inherited watchdog while USB root is prepared, with a boot deadline.
+    run(k/'scripts/config','--file',b/'.config','--enable','WATCHDOG_HANDLE_BOOT_ENABLED','--set-val','WATCHDOG_OPEN_TIMEOUT','180')
     run(k/'scripts/config','--file',b/'.config','--module','NF_TABLES_SET','--module','NFT_FIB_IPV4','--module','NFT_FIB_IPV6','--module','NFT_FIB_INET','--module','NFT_QUEUE')
     run(*common,'olddefconfig')
     config=dict(re.findall(r'^CONFIG_(\w+)=(.+)$',(b/'.config').read_text(),re.M))
