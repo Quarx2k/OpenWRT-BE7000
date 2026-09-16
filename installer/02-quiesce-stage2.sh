@@ -5,14 +5,14 @@ umask 077
 trap '' HUP
 
 KEXEC_BIN=${1:?missing temporary kexec binary}
-PERSIST_LOG=${2:?missing persistent log path}
+ARM_LOG=${2:?missing arming log path}
 USB_MOUNT=${3:-none}
 PHASE_FILE=${4:-/tmp/be7000-kexec-quiesce.phase}
 PID_FILE=${5:-/tmp/be7000-kexec-quiesce.pid}
 TMP_LOG="/tmp/be7000-kexec-quiesce-stage2.log"
 
-if [ -r "$PERSIST_LOG" ]; then
-	cp "$PERSIST_LOG" "$TMP_LOG" 2>/dev/null || : > "$TMP_LOG"
+if [ -r "$ARM_LOG" ]; then
+	cp "$ARM_LOG" "$TMP_LOG" 2>/dev/null || : > "$TMP_LOG"
 else
 	: > "$TMP_LOG"
 fi
@@ -23,12 +23,6 @@ log()
 	LINE="$(date -Iseconds 2>/dev/null || date) $*"
 	echo "$LINE" >> "$TMP_LOG"
 	echo "$LINE" > /dev/console 2>/dev/null || true
-}
-
-persist_log()
-{
-	cp "$TMP_LOG" "$PERSIST_LOG" 2>/dev/null || true
-	sync
 }
 
 stop_service()
@@ -253,7 +247,7 @@ abort_to_stock()
 	echo "failed:quiesce" > "$PHASE_FILE"
 	log "critical quiesce verification failed: $REASON"
 	log "forcing ordinary original reboot; kexec will not be called"
-	persist_log
+	sync
 	/sbin/reboot -f
 	while :; do sleep 60; done
 }
@@ -381,7 +375,6 @@ echo s > /proc/sysrq-trigger
 sleep 2
 
 log "requesting emergency read-only remount"
-persist_log
 echo "transition" > "$PHASE_FILE"
 echo u > /proc/sysrq-trigger
 sleep 1
@@ -406,8 +399,7 @@ RC=$?
 # freeze_processes() thaws automatically when it fails before shutdown.
 echo "failed:$RC" > "$PHASE_FILE"
 log "kexec returned unexpectedly with rc=$RC; forcing ordinary reboot"
-mount -o remount,rw /data >/dev/null 2>&1 || true
-persist_log
+sync
 /sbin/reboot -f
 
 while :; do sleep 60; done

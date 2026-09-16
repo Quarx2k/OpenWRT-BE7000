@@ -14,6 +14,21 @@ PHASE_FILE="/tmp/be7000-kexec-quiesce.phase"
 	exit 1
 }
 
+if [ "${1:-}" = --retry ]; then
+	PHASE=$(cat "$PHASE_FILE" 2>/dev/null || true)
+	case "$PHASE" in
+		quiescing|transition|failed:*)
+			echo "ERROR: the previous boot attempt reached shutdown; restart Xiaomi before retrying" >&2
+			exit 2
+			;;
+	esac
+	WORKER_PID=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ -n "$WORKER_PID" ] && kill -0 "$WORKER_PID" 2>/dev/null; then
+		echo "ERROR: a boot transition is already running; wait for it to finish" >&2
+		exit 2
+	fi
+fi
+
 if [ -r "$PID_FILE" ]; then
 	WORKER_PID=$(cat "$PID_FILE" 2>/dev/null || true)
 	PHASE=$(cat "$PHASE_FILE" 2>/dev/null || echo unknown)
@@ -46,6 +61,10 @@ rm -f /tmp/be7000-kexec-quiesce.bin \
 	/tmp/be7000-kexec-quiesce-stage2.sh "$PID_FILE" "$PHASE_FILE"
 
 if [ -r /sys/kernel/kexec_loaded ] && [ "$(cat /sys/kernel/kexec_loaded)" = "1" ]; then
+	grep -q '^kexec_mod ' /proc/modules || {
+		echo "ERROR: another loader has prepared a kernel; refusing to unload it" >&2
+		exit 2
+	}
 	"$KEXEC" -c -u
 fi
 

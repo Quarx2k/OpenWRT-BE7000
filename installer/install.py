@@ -9,6 +9,7 @@ from storage import ext4_uuid, USERDATA_SIZES, select_userdata_image
 from wlan import collect as collect_wlan
 from wlan import collect_missing_acceleration
 from autostart import install as install_autostart
+from autostart import sync_state as sync_autostart_state
 from ui import ask, choose, confirm, say, styled
 from kernel_profiles import render_script, parse_preflight, check_bundle, check_existing
 
@@ -26,6 +27,13 @@ done
 LEGACY_CRASH_CHECK='''CRASH_UPLOAD=$(uci -q get miwifi.server.LOG 2>/dev/null || true)
 [ "$CRASH_UPLOAD" = "127.0.0.1:9" ] ||
 \tdie "crash-log retention stub is not armed (miwifi.server.LOG=${CRASH_UPLOAD:-unset})"
+'''
+LEGACY_PANIC_BACKUP='''if [ -s /data/usr/log/panic.tar.gz ]; then
+\tPANIC_BACKUP="/data/usr/log/panic-before-kexec-$STAMP.tar.gz"
+\tcp /data/usr/log/panic.tar.gz "$PANIC_BACKUP"
+\techo "Previous panic archive preserved as: $PANIC_BACKUP"
+fi
+
 '''
 
 def local_bundle():
@@ -53,25 +61,51 @@ def scp(client, file, target):
         while block:=f.read(128*1024):channel.sendall(block)
     channel.sendall(b'\0');ack();channel.close()
 
-def update_boot_scripts(client,payload):
+def update_boot_scripts(client,payload,here=None):
     # Patch installed scripts without replacing their generated kernel layout.
-    for name in ['01-load-only.sh','02-execute.sh']:
+    here=here or Path(__file__).resolve().parent
+    for name in ['02-quiesce-stage2.sh','03-cancel.sh','01-load-only.sh','02-execute.sh']:
         path=payload+'/'+name
         script=run(client,'cat '+shlex.quote(path)).decode()
         if name=='01-load-only.sh':
-            if DEVICE_WAIT in script:continue
-            if script.count(DEVICE_CHECK)!=1:
+            if DEVICE_WAIT not in script and script.count(DEVICE_CHECK)!=1:
                 raise RuntimeError('The saved loader could not be updated. Use the matching image archive.')
-            updated=script.replace(DEVICE_CHECK,DEVICE_WAIT+DEVICE_CHECK)
-        else:
+            updated=script if DEVICE_WAIT in script else script.replace(DEVICE_CHECK,DEVICE_WAIT+DEVICE_CHECK)
+            updated=updated.replace('''module_loaded kexec_mod && die "kexec_mod is already loaded; use 03-cancel.sh first"
+module_loaded kexec_mod_arm64 && die "kexec_mod_arm64 is already loaded; use 03-cancel.sh first"''',
+'''if module_loaded kexec_mod || module_loaded kexec_mod_arm64; then
+\tsh "$BASE_DIR/03-cancel.sh" --retry || die "could not clear the previous boot attempt"
+fi''')
+        elif name=='02-execute.sh':
             updated=script.replace(LEGACY_CRASH_CHECK,'')
-            if updated==script:continue
+            updated=updated.replace(LEGACY_PANIC_BACKUP,'')
+            for line in ['[ -w /data/usr/log ] || die "/data/usr/log is not writable"',
+                         'PERSIST_LOG="/data/usr/log/kexec-quiesce-$STAMP.log"',
+                         '\techo "persistent_log: $PERSIST_LOG"','cp "$ARM_LOG" "$PERSIST_LOG"']:
+                updated=updated.replace(line+'\n','')
+            updated=updated.replace('"$TMP_KEXEC" "$PERSIST_LOG"','"$TMP_KEXEC" "$ARM_LOG"')
+            updated=updated.replace('echo "Persistent progress log: $PERSIST_LOG"',
+                                    'echo "Progress log in RAM: /tmp/be7000-kexec-quiesce-stage2.log"')
+        else:
+            updated=render_script(here/name)
+        if updated==script:continue
         with tempfile.TemporaryDirectory() as temp:
             local=Path(temp)/name
             local.write_bytes(updated.encode())
             pending=path+'.new'
             scp(client,local,pending)
             run(client,f'sh -n {shlex.quote(pending)} && chmod 700 {shlex.quote(pending)} && mv -f {shlex.quote(pending)} {shlex.quote(path)}')
+
+def update_usb_uuid(client,payload,usb_uuid):
+    path=payload+'/launch.conf'
+    script=run(client,'cat '+shlex.quote(path)).decode()
+    updated,count=re.subn(r'^USB_UUID=.*$', 'USB_UUID='+shlex.quote(usb_uuid),script,flags=re.M)
+    if count!=1:raise RuntimeError('The saved USB configuration is invalid. Recreate the installation.')
+    if updated==script:return
+    with tempfile.TemporaryDirectory() as temp:
+        local=Path(temp)/'launch.conf';local.write_bytes(updated.encode())
+        pending=path+'.new';scp(client,local,pending)
+        run(client,f'sh -n {shlex.quote(pending)} && mv -f {shlex.quote(pending)} {shlex.quote(path)}')
 
 def fingerprint(key):
     return 'SHA256:'+base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip('=')
@@ -113,7 +147,7 @@ for f in /sys/block/loop*/loop/backing_file; do
 done
 rm -rf -- "$p"
 [ ! -e "$p" ] && [ ! -L "$p" ]
-''',120)
+''',1800)
 
 def connect_router(host,port,password):
     client=paramiko.SSHClient();KEYS.parent.mkdir(parents=True,exist_ok=True)
@@ -166,6 +200,7 @@ def main():
         say(message.strip(),'success')
         (logdir/'kernel-profile.txt').write_text(kernel_profile+'\n',encoding='ascii')
         if args.preflight_only:return
+        run(client,render_script(here/'prepare-install.sh'),15)
         if args.action=='boot':
             mode=choose('Boot mode number',['Boot once','Enable automatic startup and boot now'])
             if mode==2:args.action='autostart'
@@ -264,7 +299,11 @@ def main():
                 with tarfile.open(upload,'w:gz') as t:
                     for f in release.iterdir():t.add(f,arcname=f.name)
                 if action=='replace':
-                    (logdir/'recreate.txt').write_bytes(remove_installation(client,dev,mount,target))
+                    say('Removing the old installation. This may take several minutes…')
+                    try:result=remove_installation(client,dev,mount,target)
+                    except TimeoutError as error:
+                        raise RuntimeError('Removing the old installation timed out. Check the USB drive before retrying.') from error
+                    (logdir/'recreate.txt').write_bytes(result)
                 run(client,'umask 077; mkdir '+q(target))
                 say('Uploading images, WLAN files and this router’s calibration…')
                 try:scp(client,upload,target+'/install.tar.gz')
@@ -296,11 +335,14 @@ def main():
                     raise RuntimeError('The connection closed while preparing the USB drive.') from error
                 (logdir/'install.txt').write_bytes(result)
         payload=target+'/payload'
-        update_boot_scripts(client,payload)
+        update_boot_scripts(client,payload,here)
+        update_usb_uuid(client,payload,usb_uuid)
         if args.action=='autostart':
             install_autostart(client,run,scp,here,target,usb_uuid)
             say('Autostart enabled (three attempts).','success')
             print('In OpenWrt: System → Boot system. Without the USB drive, Xiaomi firmware starts.')
+        else:
+            sync_autostart_state(client,run,target,usb_uuid)
         if args.action=='prepare':
             say('Prepared. Run again with --boot-existing to boot.','success');return
         say('Loading the kernel into RAM…')
@@ -316,7 +358,15 @@ def main():
         (logdir/'load-logs.tar').write_bytes(run(client,f'tar -cf - -C {q(payload)} logs loaded-state.txt'))
         if args.action=='load':
             say('Loaded only; no transition. Use payload/03-cancel.sh on the router to cancel.','success');return
-        (logdir/'execute.txt').write_bytes(run(client,f'cd {q(payload)} && sh 02-execute.sh EXECUTE-KEXEC-QUIESCED',30))
+        try:
+            executed=run(client,f'cd {q(payload)} && sh 02-execute.sh EXECUTE-KEXEC-QUIESCED',30)
+        except Exception:
+            try:
+                (logdir/'cancel.txt').write_bytes(run(client,f'cd {q(payload)} && sh 03-cancel.sh --retry',30))
+            except Exception as error:
+                (logdir/'cancel.txt').write_text(str(error),encoding='utf-8')
+            raise
+        (logdir/'execute.txt').write_bytes(executed)
         say('Transition armed. Keep power connected. Open http://192.168.1.1 after boot.','success')
         print('Set the root password, country and Wi-Fi security in LuCI. Both radios start disabled.')
         print('The PC may need DHCP renewal. USB settings persist.')

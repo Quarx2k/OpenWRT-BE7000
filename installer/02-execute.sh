@@ -135,7 +135,6 @@ command -v rmmod >/dev/null 2>&1 || die "rmmod is unavailable"
 [ -x /bin/ubus ] || command -v ubus >/dev/null 2>&1 ||
 	die "ubus is unavailable"
 [ -x "$BASE_DIR/02-quiesce-stage2.sh" ] || die "stage-2 script is absent"
-[ -w /data/usr/log ] || die "/data/usr/log is not writable"
 WATCHDOG_STATE=$(ubus call system watchdog '{}' 2>/dev/null || true)
 echo "$WATCHDOG_STATE" | grep -q '"status":[[:space:]]*"running"' ||
 	die "hardware watchdog is not running; refusing a transition without recovery"
@@ -179,15 +178,8 @@ grep -q 'qca_nss_eip|qca_nss_ppe|qca_ssdk' "$BASE_DIR/02-quiesce-stage2.sh" ||
 	die "package stage-2 script does not protect EIP/PPE/SSDK"
 
 STAMP=$(date '+%Y%m%d-%H%M%S')
-PERSIST_LOG="/data/usr/log/kexec-quiesce-$STAMP.log"
 mkdir -p "$BASE_DIR/logs"
 ARM_LOG="$BASE_DIR/logs/arm-$STAMP.log"
-
-if [ -s /data/usr/log/panic.tar.gz ]; then
-	PANIC_BACKUP="/data/usr/log/panic-before-kexec-$STAMP.tar.gz"
-	cp /data/usr/log/panic.tar.gz "$PANIC_BACKUP"
-	echo "Previous panic archive preserved as: $PANIC_BACKUP"
-fi
 
 cp "$BASE_DIR/kexec" "$TMP_KEXEC"
 cp "$BASE_DIR/02-quiesce-stage2.sh" "$TMP_STAGE2"
@@ -206,17 +198,15 @@ USB_MOUNT=$(awk -v base="$BASE_DIR/" '
 	echo "cmdline: $(cat /proc/cmdline)"
 	echo "kexec_loaded: $(cat /sys/kernel/kexec_loaded)"
 	echo "usb_mount: $USB_MOUNT"
-	echo "persistent_log: $PERSIST_LOG"
 	echo "action: 10-second cancel window, service/WLAN/remoteproc quiesce, reverse-order module unload with EIP/PPE/SSDK retained, USB detach, sync, read-only remount, device/PCI shutdown, serialize RPM GLINK, park CPU1-3 in the physical spin-table pen, then kexec"
 	echo "purgatory_checks: disabled for this diagnostic run"
 	echo "watchdog_before: $(echo "$WATCHDOG_STATE" | tr '\n' ' ')"
 } > "$ARM_LOG"
-cp "$ARM_LOG" "$PERSIST_LOG"
 sync
 
 echo "countdown" > "$PHASE_FILE"
 /sbin/start-stop-daemon -S -b -m -p "$PID_FILE" -x "$TMP_STAGE2" -- \
-	"$TMP_KEXEC" "$PERSIST_LOG" "$USB_MOUNT" "$PHASE_FILE" "$PID_FILE"
+	"$TMP_KEXEC" "$ARM_LOG" "$USB_MOUNT" "$PHASE_FILE" "$PID_FILE"
 ARMED=1
 
 sleep 1
@@ -228,4 +218,4 @@ echo "Quiesced kexec worker armed as PID $WORKER_PID."
 echo "There is a 10-second cancellation window before services are stopped."
 echo "Cancel during that window with: $BASE_DIR/03-cancel.sh"
 echo "After the phase changes to 'quiescing', do not interrupt power manually."
-echo "Persistent progress log: $PERSIST_LOG"
+echo "Progress log in RAM: /tmp/be7000-kexec-quiesce-stage2.log"

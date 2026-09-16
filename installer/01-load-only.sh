@@ -69,7 +69,7 @@ trap cleanup EXIT HUP INT TERM
 be7000_kernel_profile || die "unsupported Xiaomi kernel"
 
 for required in "$KEXEC" "$IMAGE" "$ARCH_MODULE" "$CORE_MODULE" \
-	"$DTB_TEMPLATE" "$BASE_DIR/02-quiesce-stage2.sh" "$BASE_DIR/06-check-layout.sh"; do
+	"$DTB_TEMPLATE" "$BASE_DIR/02-quiesce-stage2.sh" "$BASE_DIR/03-cancel.sh" "$BASE_DIR/06-check-layout.sh"; do
 	[ -r "$required" ] || die "missing $required"
 done
 
@@ -148,8 +148,9 @@ ROOT_MOUNT=$(mount | grep ' on / ' | head -n 1)
 [ "$(cat /sys/devices/system/cpu/online)" = "0-3" ] ||
 	die "v63 requires all four old-kernel CPUs online"
 
-module_loaded kexec_mod && die "kexec_mod is already loaded; use 03-cancel.sh first"
-module_loaded kexec_mod_arm64 && die "kexec_mod_arm64 is already loaded; use 03-cancel.sh first"
+if module_loaded kexec_mod || module_loaded kexec_mod_arm64; then
+	sh "$BASE_DIR/03-cancel.sh" --retry || die "could not clear the previous boot attempt"
+fi
 
 if [ -r /sys/kernel/kexec_loaded ] && [ "$(cat /sys/kernel/kexec_loaded)" = "1" ]; then
 	die "a kexec image is already loaded; use 03-cancel.sh first"

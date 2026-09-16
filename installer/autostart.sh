@@ -14,6 +14,8 @@ mkdir /tmp/be7000-autostart.lock 2>/dev/null || exit 0
 set -eu
 say() { echo "BE7000 autostart: $*"; }
 skip() { say "$*; staying in Xiaomi"; exit 0; }
+check_installer() { [ ! -e /tmp/be7000-installing ] || skip 'Installer is running'; }
+check_installer
 # @BE7000_KERNEL_PROFILE@
 be7000_kernel_profile || skip 'Unsupported kernel'
 say "Selected Xiaomi $KERNEL_FIRMWARE kernel profile"
@@ -25,6 +27,7 @@ expected=$(echo "$uuid" | tr -d '-')
 # This marker is written after Xiaomi finishes its own successful-boot handling.
 left=120
 while [ ! -f /tmp/boot_check_done ] || [ "$(cat /proc/xiaoqiang/boot_status 2>/dev/null)" != 3 ]; do
+    check_installer
     [ "$left" -gt 0 ] || skip 'Xiaomi boot did not complete'
     sleep 2
     left=$((left - 2))
@@ -48,6 +51,7 @@ find_usb() {
 }
 left=120
 while ! base=$(find_usb); do
+    check_installer
     [ "$left" -gt 0 ] || skip 'USB not found'
     sleep 2
     left=$((left - 2))
@@ -57,6 +61,7 @@ state="$base/boot"
 [ ! -L "$state" ] || skip 'Redirected boot directory'
 mkdir -p "$state"
 check_flags() {
+    check_installer
     [ ! -f "$state/autostart-disabled" ] || skip 'Autostart disabled'
     if [ -f "$state/xiaomi-once" ]; then
         rm "$state/xiaomi-once"
@@ -75,7 +80,10 @@ if [ -e "$state/boot-pending" ]; then
     case "$attempt" in 1|2) ;; 3) skip 'Three unconfirmed attempts';; *) skip 'Invalid attempt counter';; esac
 fi
 say 'Boot ready; transition in 10 seconds'
-sleep 10
+for second in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    check_installer
+done
 check_flags
 [ "$(find_usb)" = "$base" ] || skip 'USB mount changed'
 if [ -r /sys/kernel/kexec_loaded ]; then
@@ -94,10 +102,14 @@ if ! sh ./01-load-only.sh LOAD-OWRT12-CANDIDATE; then
     say 'Kernel load failed; retry is allowed after reboot'
     exit 1
 fi
+if [ -e /tmp/be7000-installing ]; then
+    sh ./03-cancel.sh --retry || true
+    skip 'Installer is running'
+fi
 cp loaded-state.txt "$log/loaded-state.txt"
 if ! sh ./02-execute.sh EXECUTE-KEXEC-QUIESCED; then
     say 'Transition was not armed; cancelling loaded kernel'
-    sh ./03-cancel.sh CANCEL-LOADED-KEXEC || true
+    sh ./03-cancel.sh --retry || true
     exit 1
 fi
 say 'Transition armed'

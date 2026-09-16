@@ -5,6 +5,21 @@ from kernel_profiles import render_script
 
 ROOT='/data/BE7000-OpenWrt'
 
+def sync_state(client,run,target,usb_uuid):
+    # Keep the USB status marker consistent with Xiaomi's existing binding.
+    state=shlex.quote(target+'/boot')
+    run(client,f'''set -eu
+test ! -L {state}
+mkdir -p {state}
+if [ "$(cat {ROOT}/usb.uuid 2>/dev/null)" = {shlex.quote(usb_uuid)} ] &&
+   [ "$(uci -q get firewall.be7000_openwrt.enabled)" = 1 ] &&
+   [ "$(uci -q get firewall.be7000_openwrt.path)" = {ROOT}/hook.sh ]; then
+    touch {state}/installed
+else
+    rm -f {state}/installed
+fi
+''')
+
 def install(client,run,scp,here,target,usb_uuid):
     if not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',usb_uuid):
         raise ValueError('Invalid autostart USB UUID')
