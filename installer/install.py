@@ -119,6 +119,8 @@ class TrustFirstUse(paramiko.MissingHostKeyPolicy):
         client.save_host_keys(str(KEYS))
 
 KEYS=Path.home()/'.be7000-openwrt/known_hosts'
+LOGS=(Path(sys.executable).resolve().parent if getattr(sys,'frozen',False)
+      else Path(__file__).resolve().parents[1])/'logs'
 
 def existing_installation(client,target):
     p=shlex.quote(target)
@@ -188,7 +190,7 @@ def main():
     host=args.host or ask('Router IP [192.168.32.1]: ').strip() or '192.168.32.1'
     ipaddress.ip_address(host)
     client=connect_router(host,args.port,getpass.getpass(styled('Router SSH password: ')))
-    logdir=KEYS.parent/'logs'/time.strftime('%Y%m%d-%H%M%S');logdir.mkdir(parents=True)
+    logdir=LOGS/time.strftime('%Y%m%d-%H%M%S');logdir.mkdir(parents=True)
     here=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
     try:
         # Execute a reviewed read-only script over stdin, without creating a remote file.
