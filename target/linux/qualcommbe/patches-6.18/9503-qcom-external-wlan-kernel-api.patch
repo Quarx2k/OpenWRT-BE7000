@@ -5,13 +5,14 @@ only for the external WLAN package. The WCSS driver is built by that package.
 
 --- a/drivers/soc/qcom/Kconfig
 +++ b/drivers/soc/qcom/Kconfig
-@@ -128,6 +128,19 @@
+@@ -128,6 +128,22 @@
  	tristate
  	depends on NET
  
 +config QCOM_BE7000_WLAN
 +	bool "Qualcomm external AP WLAN platform dependencies"
 +	depends on ARM64 && ARCH_QCOM && NET && CFG80211 && QCOM_SMEM && REMOTEPROC
++	select PREEMPT_COUNT
 +	select QCOM_QMI_HELPERS
 +	select QCOM_MDT_LOADER
 +	select QCOM_PIL_INFO
@@ -21,6 +22,8 @@ only for the external WLAN package. The WCSS driver is built by that package.
 +	select WIRELESS_EXT
 +	help
 +	  Enable the native services used by the external BE7000 AP driver.
++	  Track preemption nesting so QDF can identify sleepable allocations
++	  even when the kernel uses PREEMPT_NONE.
 +
  config QCOM_RAMP_CTRL
  	tristate "Qualcomm Ramp Controller driver"
