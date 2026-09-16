@@ -361,6 +361,14 @@ static int qcom_wdt_probe(struct platform_device *pdev)
 	wdt->wdd.timeout = min(wdt->wdd.max_timeout, 32U);
 	watchdog_init_timeout(&wdt->wdd, 0, dev);
 
+	/*
+	 * Hand the running timer to the core until userspace takes over.
+	 */
+	if (readl(wdt_addr(wdt, WDT_EN)) & QCOM_WDT_ENABLE) {
+		qcom_wdt_start(&wdt->wdd);
+		set_bit(WDOG_HW_RUNNING, &wdt->wdd.status);
+	}
+
 	ret = devm_watchdog_register_device(dev, &wdt->wdd);
 	if (ret)
 		return ret;
