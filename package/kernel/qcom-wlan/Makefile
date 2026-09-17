@@ -1,11 +1,11 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=qcom-wlan
-PKG_RELEASE:=11
+PKG_RELEASE:=12
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=ssh://git@github.com/Quarx2k/QCOM-WLAN.git
 PKG_SOURCE_DATE:=2026-09-17
-PKG_SOURCE_VERSION:=4c4aff4b193ac3a0b59a8caeaba791baac366cba
+PKG_SOURCE_VERSION:=20ce706183101b6133df81a8cb1f395f59c692cf
 PKG_MIRROR_HASH:=skip
 PKG_LICENSE:=GPL-2.0-only ISC BSD-3-Clause
 PKG_BUILD_PARALLEL:=1
@@ -51,7 +51,9 @@ define KernelPackage/qcom-wlan
 	$(WLAN_BUILD_DIR)/qca-wifi/wifi_3_0.ko \
 	$(WLAN_BUILD_DIR)/qca-wifi/umac.ko \
 	$(WLAN_BUILD_DIR)/qca-wifi/qca_ol.ko
-  AUTOLOAD:=$(call AutoLoad,19,qcom_q6v5_wcss_sec)
+  AUTOLOAD:=$(call AutoLoad,30,qcom_q6v5_wcss_sec qmi_helpers mem_manager qdf umac ipq_cnss2 qca_ol wifi_3_0)
+  MODPARAMS.qcom_q6v5_wcss_sec:=bringup_debug=1
+  MODPARAMS.ipq_cnss2:=bdf_pci2=0x02 enable_mlo_support=0 bringup_debug=1
 endef
 
 define KernelPackage/qcom-wlan/description
