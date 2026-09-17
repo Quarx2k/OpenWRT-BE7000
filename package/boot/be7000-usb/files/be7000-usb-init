@@ -47,9 +47,9 @@ for cpu in 1 2 3; do
 done
 cat /sys/devices/system/cpu/online
 
-# OpenWrt kmodloader loads this image's modules and resolves dependencies.
-# WLAN has no autoload entry: Q6 startup is tested after wired access is up.
-/sbin/kmodloader
+# Load only boot support here. Normal autoload runs from the final root,
+# after the USB filesystem and saved configuration are available.
+/sbin/kmodloader /etc/modules-boot.d/
 for attempt in {1..30}; do
 	for block in /sys/class/block/sd*; do
 		[[ -e $block ]] || continue
@@ -106,9 +106,6 @@ mount --bind /dev/pts /mnt/owrt-root/dev/pts
 mount --bind /mnt/usb /mnt/owrt-root/mnt/usb
 mount --bind /mnt/owrt-system /mnt/owrt-root/rom
 mount --bind /mnt/owrt-data /mnt/owrt-root/overlay
-if [[ -d $base/device/calibration ]]; then
-	mount --bind "$base/device/calibration" /mnt/owrt-root/opt/be7000/calibration
-fi
 
 echo "$sysloop $dataloop" >/tmp/be7000-root-loops
 echo 'BE7000: USB_OVERLAY_READY'
