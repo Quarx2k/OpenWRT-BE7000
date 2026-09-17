@@ -20,6 +20,7 @@ usage() {
 }
 (( $# >= 4 )) || usage
 action=$1
+package_name=$(basename "$2")
 package_dir=$(realpath "$2")
 linux_dir=$(realpath "$3")
 cross=$4
@@ -58,7 +59,7 @@ case "$action" in
         [[ ! -e $package_dir/kernel.abi ]] || fail 'Export modules from a source build, not a prebuilt package.'
         stage=$(mktemp -d)
         trap 'rm -rf -- "$stage"' EXIT
-        payload=$stage/$(basename "$package_dir")
+        payload=$stage/$package_name
         mkdir -p "$payload"
         cp "$linux_dir/include/config/kernel.release" "$payload/kernel.release"
         cp "$linux_dir/.vermagic" "$payload/kernel.abi"
