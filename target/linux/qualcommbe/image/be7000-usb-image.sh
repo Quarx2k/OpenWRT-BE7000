@@ -29,7 +29,7 @@ case "$mode" in
 		;;
 	bundle)
 		output=$1 image=$2 elf=$3 dtb=$4 system=$5 userdata=$6 nm=$7 epoch=$8
-		directory=BE7000-OpenWrt-6.12
+		directory=BE7000-OpenWrt-Snapshot
 		ethernet='native OpenWrt PPE/QCA8084'
 		wlan='external Qualcomm P74'
 		wlan_files='WLAN firmware and INI are included in system.img.'
@@ -73,15 +73,16 @@ case "$mode" in
 		printf '{\n  "kernel_base": "0x%x",\n  "kernel_entry": "0x%x",\n  "text_offset": %d,\n  "image_size": %d,\n  "image_bytes": %d,\n  "kernel_memsz": %d,\n  "secondary_holding_pen": "0x%x",\n  "cpu_release_addr": "0x4fb3eff8"\n}\n' \
 			"$kernel_base" "$entry" "$text_offset" "$image_size" "$image_bytes" "$memsz" "$pen" >"$base/payload/target-layout.json"
 		cat >"$base/README.txt" <<EOF
-Xiaomi BE7000 / OpenWrt 25.12 / native Linux 6.12
+Xiaomi BE7000 / OpenWrt snapshot / native Linux 6.18
 Ethernet: $ethernet. WLAN: $wlan.
 
 system.img: read-only 512 MiB ext4 system, label be7000-system.
 userdata.img: writable 512 MiB ext4 overlay, label be7000-userdata.
 Use a new USB directory $directory; keep existing userdata intact.
-Copy the board's device/calibration directory here.
 $wlan_files
-Device calibration, passwords and 5.4 WLAN modules are not included.
+The external WLAN image embeds this router's local calibration archive.
+Images containing that calibration are private to this device.
+Passwords and 5.4 WLAN modules are not included.
 
 Boot diagnostics are saved in logs/openwrt-<boot-id>/; logs/latest points
 to the latest boot. kernel.log and state.latest.txt are periodic snapshots.
@@ -99,8 +100,8 @@ Boot arguments must retain rdinit=/usr/libexec/be7000-usb-init maxcpus=4
 be7000_printk=1 be7000_handoff=1 from the DTB. Add:
 be7000_usb_dir=$directory be7000_usb_uuid=<USB UUID>
 The DTB appends pcie_port_pm=off to keep PCIe ports awake during WLAN bring-up.
-No NAND write is involved. USB boot and native Ethernet have been tested.
-Qualcomm WLAN bring-up currently stops at QCN9224 MHI registration.
+No NAND write is involved. This is the Linux 6.18 port of the tested Linux 6.12
+USB/Ethernet/P74 WLAN integration. Linux 6.18 hardware validation is pending.
 EOF
 		tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" -C "$work" -czf "$output" "$directory"
 		;;

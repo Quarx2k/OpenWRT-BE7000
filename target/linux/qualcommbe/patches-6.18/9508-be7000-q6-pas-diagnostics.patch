@@ -6,16 +6,16 @@ Report only the first interrupted SMC before the resume loop completes.
 
 --- a/drivers/firmware/qcom/qcom_scm.c
 +++ b/drivers/firmware/qcom/qcom_scm.c
-@@ -706,6 +706,8 @@
- int qcom_scm_pas_auth_and_reset(u32 peripheral)
+@@ -750,6 +750,8 @@
+ int qcom_scm_pas_auth_and_reset(u32 pas_id)
  {
  	int ret;
-+	bool trace = IS_ENABLED(CONFIG_QCOM_BE7000_WLAN) && peripheral == 6 &&
++	bool trace = IS_ENABLED(CONFIG_QCOM_BE7000_WLAN) && pas_id == 6 &&
 +		     of_machine_is_compatible("xiaomi,be7000");
  	struct qcom_scm_desc desc = {
  		.svc = QCOM_SCM_SVC_PIL,
  		.cmd = QCOM_SCM_PIL_PAS_AUTH_AND_RESET,
-@@ -715,19 +717,35 @@
+@@ -759,19 +761,35 @@
  	};
  	struct qcom_scm_res res;
  
@@ -62,7 +62,7 @@ Report only the first interrupted SMC before the resume loop completes.
  #include <linux/slab.h>
  #include <linux/types.h>
  #include <linux/firmware/qcom/qcom_scm.h>
-@@ -35,23 +37,45 @@
+@@ -38,24 +40,46 @@
  #define SCM_SMC_FIRST_REG_IDX	2
  #define SCM_SMC_LAST_REG_IDX	(SCM_SMC_FIRST_REG_IDX + SCM_SMC_N_REG_ARGS - 1)
  
@@ -90,6 +90,7 @@ Report only the first interrupted SMC before the resume loop completes.
 +			raw_smp_processor_id(), task_pid_nr(current),
 +			a0, smc->args[1], smc->args[2]);
  	do {
+ 		trace_scm_smc_request(a0, smc);
  		arm_smccc_smc_quirk(a0, smc->args[1], smc->args[2],
  				    smc->args[3], smc->args[4], smc->args[5],
  				    quirk.state.a6, smc->args[7], res, &quirk);
@@ -109,7 +110,7 @@ Report only the first interrupted SMC before the resume loop completes.
  }
  
  static void fill_wq_resume_args(struct arm_smccc_args *resume, u32 smc_call_ctx)
-@@ -97,6 +121,7 @@
+@@ -102,6 +126,7 @@
  	u32 wq_ctx, smc_call_ctx;
  	struct arm_smccc_args resume;
  	struct arm_smccc_args *smc = waitq;
@@ -117,20 +118,20 @@ Report only the first interrupted SMC before the resume loop completes.
  
  	do {
  		__scm_smc_do_quirk(smc, res);
-@@ -105,7 +130,12 @@
- 			wq_ctx = res->a1;
+@@ -111,7 +136,12 @@
  			smc_call_ctx = res->a2;
  
+ 			trace_scm_waitq_sleep(wq_ctx, smc_call_ctx);
 +			if (trace)
 +				pr_info("BE7000 PAS6 WAITQ begin ctx=%u call=%u\n",
 +					wq_ctx, smc_call_ctx);
- 			ret = qcom_scm_wait_for_wq_completion(wq_ctx);
+ 			ret = qcom_scm_wait_for_wq_completion(dev, wq_ctx);
 +			if (trace)
 +				pr_info("BE7000 PAS6 WAITQ end ret=%d\n", ret);
  			if (ret)
  				return ret;
  
-@@ -121,6 +151,7 @@
+@@ -128,6 +158,7 @@
  			struct arm_smccc_res *res, bool atomic)
  {
  	int ret, retry_count = 0;
@@ -138,7 +139,7 @@ Report only the first interrupted SMC before the resume loop completes.
  
  	if (atomic) {
  		__scm_smc_do_quirk(smc, res);
-@@ -128,11 +159,18 @@
+@@ -135,11 +166,18 @@
  	}
  
  	do {

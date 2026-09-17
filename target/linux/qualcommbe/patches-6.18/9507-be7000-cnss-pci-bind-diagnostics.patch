@@ -266,9 +266,9 @@ stack enabled. Do not change the probe sequence or error handling.
  
  	if (IS_ENABLED(CONFIG_OF) && bridge->parent &&
  	    bridge->parent->of_node) {
-+		be7000_cnss_trace(dev, driver->name, "of_dma_configure begin", 0);
++		be7000_cnss_trace(dev, drv ? drv->name : "", "of_dma_configure begin", 0);
  		ret = of_dma_configure(dev, bridge->parent->of_node, true);
-+		be7000_cnss_trace(dev, driver->name, "of_dma_configure end", ret);
++		be7000_cnss_trace(dev, drv ? drv->name : "", "of_dma_configure end", ret);
  	} else if (has_acpi_companion(bridge)) {
  		struct acpi_device *adev = to_acpi_device_node(bridge->fwnode);
  

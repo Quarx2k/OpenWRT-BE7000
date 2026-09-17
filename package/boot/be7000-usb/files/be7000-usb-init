@@ -15,7 +15,7 @@ trap 'failed "$LINENO"' ERR
 
 [[ -c /dev/kmsg ]] || mknod -m 600 /dev/kmsg c 1 11
 exec >/dev/kmsg 2>&1
-echo 'BE7000: native Linux 6.12 USB startup'
+echo 'BE7000: native Linux 6.18 USB startup'
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 IFS= read -r -d '' compatible </sys/firmware/devicetree/base/compatible
@@ -31,7 +31,7 @@ echo 'xiaomi,be7000' >/tmp/sysinfo/board_name
 echo 'Xiaomi BE7000' >/tmp/sysinfo/model
 
 usb_uuid=
-usb_dir=BE7000-OpenWrt-6.12
+usb_dir=BE7000-OpenWrt-Snapshot
 read -r -a cmdline </proc/cmdline
 for arg in "${cmdline[@]}"; do
 	case "$arg" in

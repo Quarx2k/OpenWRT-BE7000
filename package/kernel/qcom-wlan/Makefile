@@ -92,7 +92,7 @@ endef
 ifeq ($(WLAN_FROM_SOURCE),1)
 define Build/Prepare
 	$(call Build/Prepare/Default)
-	bash $(PKG_BUILD_DIR)/tools/prepare-linux-6.12.sh $(WLAN_BUILD_DIR)
+	bash $(PKG_BUILD_DIR)/tools/prepare-linux-6.18.sh $(WLAN_BUILD_DIR)
 endef
 
 define Build/Compile

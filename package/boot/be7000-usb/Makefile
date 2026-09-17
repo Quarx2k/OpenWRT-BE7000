@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=be7000-usb
-PKG_RELEASE:=8
+PKG_RELEASE:=9
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/kernel.mk
@@ -50,7 +50,7 @@ define Package/be7000-usb/install
 	$(INSTALL_BIN) ./files/be7000-packet-steering $(1)/usr/libexec/platform/packet-steering.sh
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/net
 	$(INSTALL_BIN) ./files/be7000-packet-steering.hotplug $(1)/etc/hotplug.d/net/90-be7000-packet-steering
-	printf 'be7000-openwrt-25.12-linux-6.12-r1\n' > $(1)/etc/be7000-system-id
+	printf 'be7000-openwrt-snapshot-linux-6.18-r1\n' > $(1)/etc/be7000-system-id
 endef
 
 $(eval $(call BuildPackage,be7000-usb))

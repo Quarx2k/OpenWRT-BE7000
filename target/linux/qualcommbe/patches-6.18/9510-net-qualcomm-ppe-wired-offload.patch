@@ -8,11 +8,9 @@ Flow-table operations and resource handling are adapted from Julius
 Bairaktaris' HPPE driver (20862f96324f7080d1e1ff1b946b18dcb27ed21e),
 with APPE layouts checked against QSDK 12.1 SSDK.
 
-diff --git a/drivers/net/ethernet/qualcomm/Kconfig b/drivers/net/ethernet/qualcomm/Kconfig
-index b636ffa..0a03925 100644
 --- a/drivers/net/ethernet/qualcomm/Kconfig
 +++ b/drivers/net/ethernet/qualcomm/Kconfig
-@@ -78,6 +78,15 @@ config QCOM_PPE
+@@ -77,6 +77,15 @@
  	  To compile this driver as a module, choose M here. The module
  	  will be called qcom-ppe.
  
@@ -28,23 +26,19 @@ index b636ffa..0a03925 100644
  source "drivers/net/ethernet/qualcomm/rmnet/Kconfig"
  
  endif # NET_VENDOR_QUALCOMM
-diff --git a/drivers/net/ethernet/qualcomm/ppe/Makefile b/drivers/net/ethernet/qualcomm/ppe/Makefile
-index 0ada397..000f839 100644
 --- a/drivers/net/ethernet/qualcomm/ppe/Makefile
 +++ b/drivers/net/ethernet/qualcomm/ppe/Makefile
 @@ -5,6 +5,7 @@
  
  obj-$(CONFIG_QCOM_PPE) += qcom-ppe.o
- qcom-ppe-objs := ppe.o ppe_config.o ppe_debugfs.o ppe_port.o
+ qcom-ppe-objs := ppe.o ppe_config.o ppe_debugfs.o ppe_port.o ppe_api.o
 +qcom-ppe-$(CONFIG_QCOM_PPE_OFFLOAD) += ppe_flow.o ppe_offload.o ppe_switchdev.o
  
  #EDMA
  qcom-ppe-objs += edma.o edma_cfg_rx.o edma_cfg_tx.o edma_debugfs.o edma_port.o edma_rx.o edma_tx.o edma_ethtool.o
-diff --git a/drivers/net/ethernet/qualcomm/ppe/edma_port.c b/drivers/net/ethernet/qualcomm/ppe/edma_port.c
-index 6730cee..f3bc773 100644
 --- a/drivers/net/ethernet/qualcomm/ppe/edma_port.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/edma_port.c
-@@ -307,6 +307,26 @@ static int edma_port_set_mac_address(struct net_device *netdev, void *macaddr)
+@@ -309,6 +309,26 @@
  	return 0;
  }
  
@@ -71,7 +65,7 @@ index 6730cee..f3bc773 100644
  static const struct net_device_ops edma_port_netdev_ops = {
  	.ndo_open = edma_port_open,
  	.ndo_stop = edma_port_close,
-@@ -318,6 +338,8 @@ static const struct net_device_ops edma_port_netdev_ops = {
+@@ -320,6 +340,8 @@
  	.ndo_eth_ioctl = edma_port_ioctl,
  	.ndo_features_check = edma_port_feature_check,
  	.ndo_select_queue = edma_port_select_queue,
@@ -80,7 +74,7 @@ index 6730cee..f3bc773 100644
  };
  
  /**
-@@ -334,6 +356,7 @@ void edma_port_destroy(struct ppe_port *port)
+@@ -336,6 +358,7 @@
  	edma_port_deconfigure(netdev);
  	edma_port_stats_free(netdev);
  	unregister_netdev(netdev);
@@ -88,15 +82,15 @@ index 6730cee..f3bc773 100644
  	free_netdev(netdev);
  	ppe_port_phylink_destroy(port);
  	edma_ctx->netdev_arr[port_id - 1] = NULL;
-@@ -433,6 +456,7 @@ int edma_port_setup(struct ppe_port *port)
+@@ -429,6 +452,7 @@
+ 		goto port_phylink_setup_fail;
  	}
  
- 	/* Register the network interface. */
 +	ppe_offload_port_set(ppe_dev, port_id, netdev);
  	ret = register_netdev(netdev);
  	if (ret) {
  		netdev_dbg(netdev, "Error registering netdevice %s\n",
-@@ -444,6 +468,7 @@ int edma_port_setup(struct ppe_port *port)
+@@ -440,6 +464,7 @@
  	return ret;
  
  register_netdev_fail:
@@ -104,8 +98,6 @@ index 6730cee..f3bc773 100644
  	ppe_port_phylink_destroy(port);
  port_phylink_setup_fail:
  	edma_port_deconfigure(netdev);
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe.c b/drivers/net/ethernet/qualcomm/ppe/ppe.c
-index 04c8a74..23c1bf0 100644
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe.c
 @@ -19,6 +19,7 @@
@@ -116,7 +108,7 @@ index 04c8a74..23c1bf0 100644
  
  #define PPE_PORT_MAX		8
  #define PPE_CLK_RATE		353000000
-@@ -206,14 +207,22 @@ static int qcom_ppe_probe(struct platform_device *pdev)
+@@ -211,14 +212,22 @@
  	if (ret)
  		return dev_err_probe(dev, ret, "EDMA setup failed\n");
  
@@ -139,19 +131,17 @@ index 04c8a74..23c1bf0 100644
  	platform_set_drvdata(pdev, ppe_dev);
  
  	return 0;
-@@ -226,6 +235,7 @@ static void qcom_ppe_remove(struct platform_device *pdev)
+@@ -231,6 +240,7 @@
  	ppe_dev = platform_get_drvdata(pdev);
- 	ppe_debugfs_teardown(ppe_dev);
  	ppe_port_mac_deinit(ppe_dev);
+ 	ppe_debugfs_teardown(ppe_dev);
 +	ppe_offload_exit(ppe_dev);
  	edma_destroy(ppe_dev);
+ }
  
- 	platform_set_drvdata(pdev, NULL);
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe.h b/drivers/net/ethernet/qualcomm/ppe/ppe.h
-index 86713f7..7c58e2b 100644
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe.h
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe.h
-@@ -21,6 +21,7 @@ struct dentry;
+@@ -23,6 +23,7 @@
   * @num_ports: Number of PPE ports.
   * @debugfs_root: Debugfs root entry.
   * @ports: PPE MAC ports.
@@ -159,7 +149,7 @@ index 86713f7..7c58e2b 100644
   * @num_icc_paths: Number of interconnect paths.
   * @icc_paths: Interconnect path array.
   *
-@@ -35,6 +36,7 @@ struct ppe_device {
+@@ -37,6 +38,7 @@
  	unsigned int num_ports;
  	struct dentry *debugfs_root;
  	struct ppe_ports *ports;
@@ -167,10 +157,7 @@ index 86713f7..7c58e2b 100644
  	unsigned int num_icc_paths;
  	struct icc_bulk_data icc_paths[] __counted_by(num_icc_paths);
  };
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c b/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c
-new file mode 100644
-index 0000000..9c6889e
---- /dev/null
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c
 @@ -0,0 +1,261 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
@@ -434,10 +421,7 @@ index 0000000..9c6889e
 +	       FIELD_PREP(GENMASK(31, 23), o->ppe->clk_rate / 1000000);
 +	return regmap_write(o->regmap, PPE_O_FLOW_CTRL, ctrl);
 +}
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
-new file mode 100644
-index 0000000..83ba14c
---- /dev/null
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 @@ -0,0 +1,948 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
@@ -1388,10 +1372,7 @@ index 0000000..83ba14c
 +	rhashtable_destroy(&o->flows);
 +	ppe->offload = NULL;
 +}
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
-new file mode 100644
-index 0000000..ebd7849
---- /dev/null
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
 @@ -0,0 +1,190 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later OR MIT */
@@ -1584,10 +1565,7 @@ index 0000000..ebd7849
 +}
 +#endif
 +#endif
-diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
-new file mode 100644
-index 0000000..b26270b
---- /dev/null
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
 @@ -0,0 +1,433 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
