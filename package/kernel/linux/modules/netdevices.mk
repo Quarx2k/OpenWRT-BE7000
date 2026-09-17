@@ -2170,6 +2170,20 @@ endef
 
 $(eval $(call KernelPackage,qcom-ppe))
 
+define KernelPackage/qcom-ppe-offload
+  SUBMENU:=$(NETWORK_DEVICES_MENU)
+  DEPENDS:=@TARGET_qualcommbe +kmod-qcom-ppe +kmod-nf-flow
+  TITLE:=Qualcomm IPQ9574 wired bridge and NAT/PPPoE offload
+  KCONFIG:=CONFIG_QCOM_PPE_OFFLOAD=y
+endef
+
+define KernelPackage/qcom-ppe-offload/description
+  Enable known-unicast bridge and IPv4 TCP/UDP flowtable acceleration
+  in the native PPE driver, including NAT and untagged PPPoE.
+endef
+
+$(eval $(call KernelPackage,qcom-ppe-offload))
+
 define KernelPackage/qlcnic
   SUBMENU:=$(NETWORK_DEVICES_MENU)
   DEPENDS:=@PCI_SUPPORT +kmod-hwmon-core

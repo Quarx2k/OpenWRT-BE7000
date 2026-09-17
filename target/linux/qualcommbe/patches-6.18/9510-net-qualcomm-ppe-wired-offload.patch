@@ -1,0 +1,1981 @@
+Subject: [PATCH] net: ethernet: qualcomm: add APPE wired bridge and flowtable offload
+
+Add optional IPQ9574 known-unicast switching and IPv4 TCP/UDP routing,
+NAT and untagged PPPoE offload to the native PPE driver. Use the APPE
+table layout and keep unsupported paths in software.
+
+Flow-table operations and resource handling are adapted from Julius
+Bairaktaris' HPPE driver (20862f96324f7080d1e1ff1b946b18dcb27ed21e),
+with APPE layouts checked against QSDK 12.1 SSDK.
+
+diff --git a/drivers/net/ethernet/qualcomm/Kconfig b/drivers/net/ethernet/qualcomm/Kconfig
+index b636ffa..0a03925 100644
+--- a/drivers/net/ethernet/qualcomm/Kconfig
++++ b/drivers/net/ethernet/qualcomm/Kconfig
+@@ -78,6 +78,15 @@ config QCOM_PPE
+ 	  To compile this driver as a module, choose M here. The module
+ 	  will be called qcom-ppe.
+ 
++config QCOM_PPE_OFFLOAD
++	bool "IPQ9574 PPE wired bridge and flowtable offload"
++	depends on QCOM_PPE && BRIDGE && NF_FLOW_TABLE
++	select NET_SWITCHDEV
++	help
++	  Offload known unicast bridge traffic and IPv4 TCP/UDP routing,
++	  NAT and untagged PPPoE on the physical IPQ9574 PPE ports.
++	  Unsupported traffic continues through the software network stack.
++
+ source "drivers/net/ethernet/qualcomm/rmnet/Kconfig"
+ 
+ endif # NET_VENDOR_QUALCOMM
+diff --git a/drivers/net/ethernet/qualcomm/ppe/Makefile b/drivers/net/ethernet/qualcomm/ppe/Makefile
+index 0ada397..000f839 100644
+--- a/drivers/net/ethernet/qualcomm/ppe/Makefile
++++ b/drivers/net/ethernet/qualcomm/ppe/Makefile
+@@ -5,6 +5,7 @@
+ 
+ obj-$(CONFIG_QCOM_PPE) += qcom-ppe.o
+ qcom-ppe-objs := ppe.o ppe_config.o ppe_debugfs.o ppe_port.o
++qcom-ppe-$(CONFIG_QCOM_PPE_OFFLOAD) += ppe_flow.o ppe_offload.o ppe_switchdev.o
+ 
+ #EDMA
+ qcom-ppe-objs += edma.o edma_cfg_rx.o edma_cfg_tx.o edma_debugfs.o edma_port.o edma_rx.o edma_tx.o edma_ethtool.o
+diff --git a/drivers/net/ethernet/qualcomm/ppe/edma_port.c b/drivers/net/ethernet/qualcomm/ppe/edma_port.c
+index 6730cee..f3bc773 100644
+--- a/drivers/net/ethernet/qualcomm/ppe/edma_port.c
++++ b/drivers/net/ethernet/qualcomm/ppe/edma_port.c
+@@ -307,6 +307,26 @@ static int edma_port_set_mac_address(struct net_device *netdev, void *macaddr)
+ 	return 0;
+ }
+ 
++#include <linux/platform_device.h>
++#include "ppe_offload.h"
++
++static int edma_port_parent_id(struct net_device *dev,
++			       struct netdev_phys_item_id *ppid)
++{
++	struct edma_port_priv *priv = netdev_priv(dev);
++	struct ppe_device *ppe = priv->ppe_port->ppe_dev;
++	struct resource *res;
++	u64 id;
++
++	if (!ppe->offload)
++		return -EOPNOTSUPP;
++	res = platform_get_resource(to_platform_device(ppe->dev), IORESOURCE_MEM, 0);
++	id = res->start;
++	ppid->id_len = sizeof(id);
++	memcpy(ppid->id, &id, sizeof(id));
++	return 0;
++}
++
+ static const struct net_device_ops edma_port_netdev_ops = {
+ 	.ndo_open = edma_port_open,
+ 	.ndo_stop = edma_port_close,
+@@ -318,6 +338,8 @@ static const struct net_device_ops edma_port_netdev_ops = {
+ 	.ndo_eth_ioctl = edma_port_ioctl,
+ 	.ndo_features_check = edma_port_feature_check,
+ 	.ndo_select_queue = edma_port_select_queue,
++	.ndo_setup_tc = ppe_offload_setup_tc,
++	.ndo_get_port_parent_id = edma_port_parent_id,
+ };
+ 
+ /**
+@@ -334,6 +356,7 @@ void edma_port_destroy(struct ppe_port *port)
+ 	edma_port_deconfigure(netdev);
+ 	edma_port_stats_free(netdev);
+ 	unregister_netdev(netdev);
++	ppe_offload_port_set(port->ppe_dev, port_id, NULL);
+ 	free_netdev(netdev);
+ 	ppe_port_phylink_destroy(port);
+ 	edma_ctx->netdev_arr[port_id - 1] = NULL;
+@@ -433,6 +456,7 @@ int edma_port_setup(struct ppe_port *port)
+ 	}
+ 
+ 	/* Register the network interface. */
++	ppe_offload_port_set(ppe_dev, port_id, netdev);
+ 	ret = register_netdev(netdev);
+ 	if (ret) {
+ 		netdev_dbg(netdev, "Error registering netdevice %s\n",
+@@ -444,6 +468,7 @@ int edma_port_setup(struct ppe_port *port)
+ 	return ret;
+ 
+ register_netdev_fail:
++	ppe_offload_port_set(ppe_dev, port_id, NULL);
+ 	ppe_port_phylink_destroy(port);
+ port_phylink_setup_fail:
+ 	edma_port_deconfigure(netdev);
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe.c b/drivers/net/ethernet/qualcomm/ppe/ppe.c
+index 04c8a74..23c1bf0 100644
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe.c
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe.c
+@@ -19,6 +19,7 @@
+ #include "ppe_config.h"
+ #include "ppe_debugfs.h"
+ #include "ppe_port.h"
++#include "ppe_offload.h"
+ 
+ #define PPE_PORT_MAX		8
+ #define PPE_CLK_RATE		353000000
+@@ -206,14 +207,22 @@ static int qcom_ppe_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "EDMA setup failed\n");
+ 
++	ret = ppe_offload_init(ppe_dev);
++	if (ret) {
++		edma_destroy(ppe_dev);
++		return dev_err_probe(dev, ret, "PPE offload initialization failed\n");
++	}
++
+ 	ret = ppe_port_mac_init(ppe_dev);
+ 	if (ret) {
++		ppe_offload_exit(ppe_dev);
+ 		edma_destroy(ppe_dev);
+ 		return dev_err_probe(dev, ret,
+ 				     "PPE Port MAC initialization failed\n");
+ 	}
+ 
+ 	ppe_debugfs_setup(ppe_dev);
++	ppe_offload_debugfs(ppe_dev);
+ 	platform_set_drvdata(pdev, ppe_dev);
+ 
+ 	return 0;
+@@ -226,6 +235,7 @@ static void qcom_ppe_remove(struct platform_device *pdev)
+ 	ppe_dev = platform_get_drvdata(pdev);
+ 	ppe_debugfs_teardown(ppe_dev);
+ 	ppe_port_mac_deinit(ppe_dev);
++	ppe_offload_exit(ppe_dev);
+ 	edma_destroy(ppe_dev);
+ 
+ 	platform_set_drvdata(pdev, NULL);
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe.h b/drivers/net/ethernet/qualcomm/ppe/ppe.h
+index 86713f7..7c58e2b 100644
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe.h
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe.h
+@@ -21,6 +21,7 @@ struct dentry;
+  * @num_ports: Number of PPE ports.
+  * @debugfs_root: Debugfs root entry.
+  * @ports: PPE MAC ports.
++ * @offload: Optional switchdev and flowtable state.
+  * @num_icc_paths: Number of interconnect paths.
+  * @icc_paths: Interconnect path array.
+  *
+@@ -35,6 +36,7 @@ struct ppe_device {
+ 	unsigned int num_ports;
+ 	struct dentry *debugfs_root;
+ 	struct ppe_ports *ports;
++	struct ppe_offload *offload;
+ 	unsigned int num_icc_paths;
+ 	struct icc_bulk_data icc_paths[] __counted_by(num_icc_paths);
+ };
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c b/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c
+new file mode 100644
+index 0000000..9c6889e
+--- /dev/null
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_flow.c
+@@ -0,0 +1,261 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
++/* APPE adaptation of the PPE flow-table command interface. */
++
++#include <linux/delay.h>
++#include "ppe_offload.h"
++
++int ppe_o_write(struct ppe_offload *o, u32 reg, const u32 *w, int n)
++{
++	int i, ret;
++
++	/* A table write is committed by its last word, in ascending order. */
++	for (i = 0; i < n; i++) {
++		ret = regmap_write(o->regmap, reg + i * 4, w[i]);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++int ppe_o_clear(struct ppe_offload *o, u32 reg, int n)
++{
++	const u32 zero[11] = {};
++
++	return ppe_o_write(o, reg, zero, n);
++}
++
++static int ppe_o_result(struct ppe_offload *o, u32 reg, u32 count,
++			u32 cmd_id, u32 *result)
++{
++	u32 val;
++	int i, ret;
++
++	/* Reading consumes a result; never read it again after the poll. */
++	for (i = 0; i < 1000; i++) {
++		ret = regmap_read(o->regmap, reg, &val);
++		if (ret)
++			return ret;
++		if ((val & count) && FIELD_GET(PPE_O_CMD_ID, val) == cmd_id) {
++			*result = val;
++			return val & PPE_O_RESULT_FAIL ? -ENOENT : 0;
++		}
++		udelay(1);
++	}
++	return -ETIMEDOUT;
++}
++
++static u32 ppe_o_command(struct ppe_offload *o, u32 op)
++{
++	o->cmd_id = (o->cmd_id + 1) & 15;
++	return FIELD_PREP(PPE_O_CMD_ID, o->cmd_id) |
++	       FIELD_PREP(PPE_O_CMD_TYPE, op) | FIELD_PREP(PPE_O_CMD_HASH, 3);
++}
++
++int ppe_o_flow_add(struct ppe_offload *o, const u32 *flow, const u32 *host,
++		   u32 *index, u32 *host_index)
++{
++	u32 cmd, result, value;
++	int ret;
++
++	lockdep_assert_held(&o->lock);
++	/* Clear unused op words: APPE has eleven flow and ten host words. */
++	ret = ppe_o_clear(o, PPE_O_FLOW_DATA, 11);
++	if (ret)
++		return ret;
++	ret = ppe_o_clear(o, PPE_O_FLOW_HOST_DATA, 10);
++	if (ret)
++		return ret;
++	ret = ppe_o_write(o, PPE_O_FLOW_HOST_DATA, host, PPE_HOST_WORDS);
++	if (ret)
++		return ret;
++	ret = regmap_write(o->regmap, PPE_O_FLOW_HOST_OP, 3);
++	if (ret)
++		return ret;
++	ret = ppe_o_write(o, PPE_O_FLOW_DATA, flow, PPE_FLOW_WORDS);
++	if (ret)
++		return ret;
++	cmd = ppe_o_command(o, PPE_O_ADD) | PPE_O_CMD_HOST;
++	ret = regmap_write(o->regmap, PPE_O_FLOW_OP, cmd);
++	if (ret)
++		return ret;
++	ret = ppe_o_result(o, PPE_O_FLOW_RESULT, PPE_O_RESULT_COUNT,
++			   o->cmd_id, &result);
++	if (ret)
++		return ret;
++	*index = FIELD_GET(PPE_O_RESULT_INDEX, result);
++	ret = regmap_read(o->regmap, PPE_O_FLOW_TABLE(*index), &value);
++	if (ret)
++		return ret;
++	*host_index = FIELD_GET(PPE_O_HOST_INDEX, value);
++	/* Drain the accompanying host result so its FIFO cannot fill. */
++	regmap_read(o->regmap, PPE_O_FLOW_HOST_RESULT, &value);
++	return *host_index < PPE_HOST_SLOTS ? 0 : -ERANGE;
++}
++
++int ppe_o_flow_read(struct ppe_offload *o, u32 index, u32 *words)
++{
++	u32 cmd, result;
++	int ret;
++
++	cmd = ppe_o_command(o, PPE_O_GET) | PPE_O_CMD_INDEX |
++	      FIELD_PREP(PPE_O_CMD_FLOW_INDEX, index);
++	ret = regmap_write(o->regmap, PPE_O_FLOW_READ, cmd);
++	if (ret)
++		return ret;
++	ret = ppe_o_result(o, PPE_O_FLOW_READ_RESULT, PPE_O_RESULT_COUNT,
++			   o->cmd_id, &result);
++	if (ret)
++		return ret;
++	return regmap_bulk_read(o->regmap, PPE_O_FLOW_READ_DATA, words,
++				PPE_FLOW_WORDS);
++}
++
++int ppe_o_flow_delete(struct ppe_offload *o, u32 index)
++{
++	u32 result, cmd = ppe_o_command(o, PPE_O_DELETE) | PPE_O_CMD_INDEX |
++			  FIELD_PREP(PPE_O_CMD_FLOW_INDEX, index);
++	int ret;
++
++	ret = regmap_write(o->regmap, PPE_O_FLOW_OP, cmd);
++	if (ret)
++		return ret;
++	return ppe_o_result(o, PPE_O_FLOW_RESULT, PPE_O_RESULT_COUNT,
++			    o->cmd_id, &result);
++}
++
++int ppe_o_host_delete(struct ppe_offload *o, u32 index)
++{
++	u32 result, cmd = ppe_o_command(o, PPE_O_DELETE) | PPE_O_CMD_INDEX |
++			  FIELD_PREP(GENMASK(23, 11), index);
++	int ret;
++
++	ret = regmap_write(o->regmap, PPE_O_HOST_OP, cmd);
++	if (ret)
++		return ret;
++	return ppe_o_result(o, PPE_O_HOST_RESULT, GENMASK(21, 18),
++			    o->cmd_id, &result);
++}
++
++void ppe_o_counter(struct ppe_offload *o, u32 index, u32 *packets, u64 *bytes)
++{
++	u32 lo = 0, hi = 0, again = 0;
++	int i;
++
++	regmap_read(o->regmap, PPE_O_FLOW_COUNTER(index), packets);
++	/* Bounded carry retry, even if the device stops answering correctly. */
++	for (i = 0; i < 3; i++) {
++		regmap_read(o->regmap, PPE_O_FLOW_COUNTER(index) + 8, &hi);
++		regmap_read(o->regmap, PPE_O_FLOW_COUNTER(index) + 4, &lo);
++		regmap_read(o->regmap, PPE_O_FLOW_COUNTER(index) + 8, &again);
++		if (hi == again)
++			break;
++	}
++	*bytes = lo | ((u64)(again & 0xff) << 32);
++}
++
++int ppe_o_port_vsi(struct ppe_offload *o, unsigned int port, u8 vsi)
++{
++	u32 words[4];
++	int ret;
++
++	ret = regmap_bulk_read(o->regmap, PPE_O_L3_PORT(port), words, 4);
++	if (ret)
++		return ret;
++	ppe_o_field(words, 41, 1, !!vsi);
++	ppe_o_field(words, 42, 6, vsi);
++	return ppe_o_write(o, PPE_O_L3_PORT(port), words, 4);
++}
++
++void ppe_o_fail(struct ppe_offload *o, int error)
++{
++	u32 value, words[4];
++	int i;
++
++	if (o->failed)
++		return;
++	o->failed = true;
++	o->hw_errors++;
++	/* Never recycle a nexthop still referenced by an indeterminate flow.
++	 * Disable classification before releasing any software ownership.
++	 */
++	for (i = 0; i < 3; i++)
++		regmap_write(o->regmap, PPE_O_FLOW_DIR(i), 0x10410410);
++	regmap_update_bits(o->regmap, PPE_O_FLOW_CTRL, PPE_O_FLOW_ENABLE, 0);
++	regmap_read(o->regmap, PPE_O_FLOW_CTRL, &value);
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++		if (regmap_bulk_read(o->regmap, PPE_O_L3_PORT(i), words, 4))
++			continue;
++		ppe_o_field(words, 0, 9, 0);
++		ppe_o_field(words, 41, 7, 0);
++		ppe_o_write(o, PPE_O_L3_PORT(i), words, 4);
++	}
++	udelay(10);
++	dev_err(o->ppe->dev, "PPE offload disabled after table error %d; using CPU\n",
++		error);
++}
++
++int ppe_o_hw_init(struct ppe_offload *o)
++{
++	u32 ctrl, val, rule[4] = {}, port[2];
++	int i, ret;
++
++	/* One no-op VLAN translation admits only untagged physical ingress.
++	 * Tagged misses are redirected intact to Linux, so a rejected VLAN
++	 * flow cannot accidentally hit an untagged flow's identical tuple.
++	 */
++	ppe_o_field(rule, 0, 1, 1);
++	ppe_o_field(rule, 1, 8, GENMASK(7, 1));
++	ppe_o_field(rule, 9, 3, 1);
++	ppe_o_field(rule, 31, 3, 1);
++	ppe_o_field(rule, 73, 2, 0); /* Physical-port bitmap. */
++	ret = ppe_o_clear(o, 0x13000, 3);
++	if (ret)
++		return ret;
++	ret = ppe_o_write(o, 0x11000, rule, 4);
++	if (ret)
++		return ret;
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++		ret = regmap_bulk_read(o->regmap, 0x19000 + i * 0x10, port, 2);
++		if (ret)
++			return ret;
++		ppe_o_field(port, 42, 2, 3);
++		ret = ppe_o_write(o, 0x19000 + i * 0x10, port, 2);
++		if (ret)
++			return ret;
++	}
++	/* FIN, SYN and RST go to conntrack, even when their tuple hits a
++	 * hardware entry. These are the same parser exceptions used by QSDK.
++	 */
++	ret = regmap_write(o->regmap, 0x1e0028, 0x02020101);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(o->regmap, 0x1e002c, GENMASK(13, 0), 0x0404);
++	if (ret)
++		return ret;
++	for (i = 46; i <= 48; i++) {
++		ret = regmap_write(o->regmap, PPE_O_L3 + 0x81c + i * 4, 3 | BIT(2));
++		if (ret)
++			return ret;
++		ret = regmap_write(o->regmap, PPE_O_L3 + 0x1678 + i * 4, 1);
++		if (ret)
++			return ret;
++	}
++
++	/* Forward misses normally to the CPU, bypass fragments, and use the
++	 * same source-host/destination-flow key for tunnel-terminated ingress.
++	 */
++	val = 0;
++	for (i = 0; i < 5; i++)
++		val |= BIT(2) << (6 * i);
++	val |= BIT(5) << (6 * 2);
++	for (i = 0; i < 3; i++) {
++		ret = regmap_write(o->regmap, PPE_O_FLOW_DIR(i), val);
++		if (ret)
++			return ret;
++	}
++	ctrl = PPE_O_FLOW_ENABLE | FIELD_PREP(GENMASK(2, 1), 1) |
++	       FIELD_PREP(GENMASK(4, 3), 1) | FIELD_PREP(GENMASK(20, 5), 60) |
++	       FIELD_PREP(GENMASK(31, 23), o->ppe->clk_rate / 1000000);
++	return regmap_write(o->regmap, PPE_O_FLOW_CTRL, ctrl);
++}
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
+new file mode 100644
+index 0000000..1805ebf
+--- /dev/null
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
+@@ -0,0 +1,927 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
++/* Native IPQ9574 flowtable offload, adapted from the HPPE flowtable driver.
++ * Only untagged, wired IPv4 TCP/UDP routes, NAT and PPPoE are accepted.
++ */
++
++#include <linux/debugfs.h>
++#include <linux/if_bridge.h>
++#include <linux/if_arp.h>
++#include <linux/if_pppox.h>
++#include <linux/if_vlan.h>
++#include <linux/inetdevice.h>
++#include <linux/ip.h>
++#include <linux/ppp_defs.h>
++#include <linux/seq_file.h>
++#include <linux/tc_act/tc_csum.h>
++#include <net/flow_offload.h>
++#include <net/pkt_cls.h>
++#include <net/switchdev.h>
++
++#include "edma_port.h"
++#include "ppe_port.h"
++#include "ppe_offload.h"
++
++struct ppe_flow_key {
++	struct flow_block *block;
++	unsigned long cookie;
++};
++
++struct ppe_tuple {
++	__be32 src, dst;
++	__be16 sport, dport;
++	u8 proto;
++};
++
++struct ppe_rule {
++	struct ppe_tuple tuple;
++	struct ethhdr eth;
++	__be32 new_src, new_dst;
++	__be16 new_sport, new_dport;
++	u16 in_sid, out_sid;
++	u8 in_port, out_port;
++};
++
++struct ppe_flow {
++	struct rhash_head node;
++	struct rcu_head rcu;
++	struct list_head list;
++	struct ppe_flow_key key;
++	struct ppe_tuple tuple;
++	u32 words[PPE_FLOW_WORDS];
++	u32 index, host;
++	int nexthop, eg_if, public_ip;
++	u8 in_port, out_port;
++	bool in_ppp, out_ppp;
++	u32 packets;
++	u64 bytes;
++	unsigned long last_used;
++};
++
++struct ppe_block {
++	struct list_head list;
++	struct ppe_offload *o;
++	struct flow_block *block;
++};
++
++static const struct rhashtable_params ppe_flow_ht_params = {
++	.head_offset = offsetof(struct ppe_flow, node),
++	.key_offset = offsetof(struct ppe_flow, key),
++	.key_len = sizeof(struct ppe_flow_key),
++	.automatic_shrinking = true,
++};
++
++int ppe_o_port_index(struct ppe_offload *o, const struct net_device *dev)
++{
++	int i;
++
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++		if (o->ports[i].dev == dev)
++			return i;
++	return -EOPNOTSUPP;
++}
++
++static int ppe_o_ifindex(struct ppe_offload *o, int ifindex)
++{
++	int i;
++
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++		if (o->ports[i].dev && o->ports[i].dev->ifindex == ifindex &&
++		    net_eq(dev_net(o->ports[i].dev), &init_net))
++			return i;
++	return -EOPNOTSUPP;
++}
++
++static int ppe_resource_get(struct ppe_offload *o, struct ppe_resource *table,
++			    int count, const u32 *words, int n)
++{
++	int free = -1, i;
++
++	for (i = 0; i < count; i++) {
++		if (!table[i].refs) {
++			if (free < 0)
++				free = i;
++		} else if (!memcmp(table[i].words, words, n * sizeof(*words))) {
++			table[i].refs++;
++			return i;
++		}
++	}
++	if (free < 0)
++		return -ENOSPC;
++	memcpy(table[free].words, words, n * sizeof(*words));
++	table[free].refs = 1;
++	return free;
++}
++
++static bool ppe_resource_put(struct ppe_resource *table, int index)
++{
++	return index >= 0 && !--table[index].refs;
++}
++
++static int ppe_ingress_if(struct ppe_offload *o, int port, bool ppp,
++			  const u8 *mac, u32 mtu)
++{
++	u32 words[4] = {}, l3port[4], mymac[2] = {};
++	int index = port + (ppp ? 8 : 0);
++	int ret;
++
++	ppe_o_field(mymac, 0, 48, ether_addr_to_u64(mac));
++	ppe_o_field(mymac, 48, 1, 1);
++	ret = ppe_o_write(o, PPE_O_MY_MAC(port), mymac, 2);
++	if (ret)
++		return ret;
++	ppe_o_field(words, 0, 14, mtu);
++	ppe_o_field(words, 14, 14, mtu);
++	ppe_o_field(words, 29, 1, 1); /* IPv4 routing, IPv6 stays in software. */
++	ppe_o_field(words, 32, 2, 3); /* TTL expired: CPU. */
++	/* A bridge MAC can appear in several port slots. Accept the hardware
++	 * match regardless of which equal MY_MAC entry won the lookup.
++	 */
++	ppe_o_field(words, 35, 8, GENMASK(7, 0));
++	ppe_o_field(words, 43, 1, ppp);
++	/* APPE's interface entry is three words, with a sixteen-byte stride. */
++	ret = ppe_o_write(o, PPE_O_IN_IF(index), words, 3);
++	if (ret)
++		return ret;
++	ret = regmap_bulk_read(o->regmap, PPE_O_L3_PORT(port), l3port, 4);
++	if (ret)
++		return ret;
++	ppe_o_field(l3port, 0, 1, 1);
++	ppe_o_field(l3port, 1, 8, index);
++	return ppe_o_write(o, PPE_O_L3_PORT(port), l3port, 4);
++}
++
++static void ppe_ingress_clear(struct ppe_offload *o, int port, bool ppp)
++{
++	u32 words[4];
++
++	if (!regmap_bulk_read(o->regmap, PPE_O_L3_PORT(port), words, 4)) {
++		ppe_o_field(words, 0, 9, 0);
++		ppe_o_write(o, PPE_O_L3_PORT(port), words, 4);
++	}
++	ppe_o_clear(o, PPE_O_IN_IF(port + (ppp ? 8 : 0)), 3);
++	ppe_o_clear(o, PPE_O_MY_MAC(port), 2);
++}
++
++static int ppe_ppp_get(struct ppe_offload *o, int port, u16 sid, const u8 *mac)
++{
++	struct ppe_offload_port *p = &o->ports[port];
++	u32 words[2] = {};
++	int ret;
++
++	if (p->if_refs || !sid)
++		return -EOPNOTSUPP;
++	if (p->ppp_refs) {
++		if (p->ppp_sid != sid || !ether_addr_equal(p->ppp_mac, mac))
++			return -EBUSY;
++		p->ppp_refs++;
++		return 0;
++	}
++	ret = ppe_ingress_if(o, port, true, mac, p->dev->mtu + ETH_HLEN);
++	if (ret)
++		return ret;
++	/* APPE differs from HPPE: L3_IF is in EXT2, not the main entry.
++	 * Type 0 names a physical-port bitmap; enable UC only, after the key.
++	 */
++	ppe_o_field(words, 0, 16, sid);
++	ppe_o_field(words, 16, 8, BIT(port));
++	ppe_o_field(words, 24, 2, 0);
++	ret = ppe_o_write(o, PPE_O_PPPOE(port), words, 1);
++	if (ret)
++		goto error;
++	ret = regmap_write(o->regmap, PPE_O_PPPOE_EXT2(port),
++			   BIT(16) | ((port + 8) << 8));
++	if (ret)
++		goto error;
++	ret = regmap_write(o->regmap, PPE_O_PPPOE_EXT(port), BIT(1));
++	if (ret)
++		goto error;
++	p->ppp_sid = sid;
++	ether_addr_copy(p->ppp_mac, mac);
++	p->ppp_refs = 1;
++	return 0;
++error:
++	regmap_write(o->regmap, PPE_O_PPPOE_EXT(port), 0);
++	ppe_ingress_clear(o, port, true);
++	return ret;
++}
++
++static void ppe_ppp_put(struct ppe_offload *o, int port)
++{
++	struct ppe_offload_port *p = &o->ports[port];
++
++	if (--p->ppp_refs)
++		return;
++	regmap_write(o->regmap, PPE_O_PPPOE_EXT(port), 0);
++	regmap_write(o->regmap, PPE_O_PPPOE_EXT2(port), 0);
++	ppe_ingress_clear(o, port, true);
++	p->ppp_sid = 0;
++}
++
++static int ppe_ingress_get(struct ppe_offload *o, struct ppe_rule *r)
++{
++	struct ppe_offload_port *p = &o->ports[r->in_port];
++	struct net_device *l3dev = p->bridge ?: p->dev;
++	int ret;
++
++	if (r->in_sid)
++		return ppe_ppp_get(o, r->in_port, r->in_sid, l3dev->dev_addr);
++	if (p->ppp_refs)
++		return -EOPNOTSUPP;
++	if (p->if_refs) {
++		p->if_refs++;
++		return 0;
++	}
++	ret = ppe_ingress_if(o, r->in_port, false, l3dev->dev_addr,
++			     l3dev->mtu + ETH_HLEN);
++	if (!ret)
++		p->if_refs = 1;
++	return ret;
++}
++
++static void ppe_ingress_put(struct ppe_offload *o, struct ppe_flow *f)
++{
++	if (f->in_ppp)
++		ppe_ppp_put(o, f->in_port);
++	else if (!--o->ports[f->in_port].if_refs)
++		ppe_ingress_clear(o, f->in_port, false);
++}
++
++static void ppe_egress_put(struct ppe_offload *o, struct ppe_flow *f)
++{
++	if (ppe_resource_put(o->nexthops, f->nexthop))
++		ppe_o_clear(o, PPE_O_NEXTHOP(f->nexthop), 4);
++	if (ppe_resource_put(o->public_ips, f->public_ip))
++		regmap_write(o->regmap, PPE_O_PUBLIC_IP(f->public_ip), 0);
++	if (ppe_resource_put(o->egress_ifs, f->eg_if)) {
++		ppe_o_clear(o, PPE_O_EG_IF(f->eg_if), 3);
++		ppe_o_clear(o, PPE_O_IN_IF(f->eg_if), 3);
++	}
++	if (f->out_ppp)
++		ppe_ppp_put(o, f->out_port);
++}
++
++static int ppe_egress_get(struct ppe_offload *o, struct ppe_rule *r,
++			 struct ppe_flow *f, bool snat, bool dnat)
++{
++	u32 words[4] = {}, size[3] = {};
++	u32 mtu = o->ports[r->out_port].dev->mtu + ETH_HLEN;
++	int ret, index;
++
++	ppe_o_field(words, 0, 48, ether_addr_to_u64(r->eth.h_source));
++	ppe_o_field(words, 48, 16, r->out_sid);
++	ppe_o_field(words, 64, 1, !!r->out_sid);
++	words[3] = mtu;
++	index = ppe_resource_get(o, o->egress_ifs + PPE_INGRESS_IFS,
++				 PPE_IF_SLOTS - PPE_INGRESS_IFS, words, 4);
++	if (index < 0)
++		return index;
++	f->eg_if = index + PPE_INGRESS_IFS;
++	if (o->egress_ifs[f->eg_if].refs == 1) {
++		ret = ppe_o_write(o, PPE_O_EG_IF(f->eg_if), words, 3);
++		if (ret)
++			goto error;
++		ppe_o_field(size, 0, 14, mtu);
++		ppe_o_field(size, 14, 14, mtu);
++		ret = ppe_o_write(o, PPE_O_IN_IF(f->eg_if), size, 3);
++		if (ret)
++			goto error;
++	}
++	if (snat) {
++		u32 ip = ntohl(r->new_src);
++
++		ret = ppe_resource_get(o, o->public_ips, 16, &ip, 1);
++		if (ret < 0)
++			goto error;
++		f->public_ip = ret;
++		ret = regmap_write(o->regmap, PPE_O_PUBLIC_IP(f->public_ip), ip);
++		if (ret)
++			goto error;
++	}
++	memset(words, 0, sizeof(words));
++	ppe_o_field(words, 0, 1, 1); /* Explicit physical egress port. */
++	ppe_o_field(words, 1, 8, r->out_port);
++	ppe_o_field(words, 9, 8, f->eg_if);
++	if (snat)
++		ppe_o_field(words, 44, 4, f->public_ip);
++	ppe_o_field(words, 48, 48, ether_addr_to_u64(r->eth.h_dest));
++	if (dnat)
++		ppe_o_field(words, 96, 32, ntohl(r->new_dst));
++	ret = ppe_resource_get(o, o->nexthops, PPE_NH_SLOTS, words, 4);
++	if (ret < 0)
++		goto error;
++	f->nexthop = ret;
++	if (o->nexthops[ret].refs == 1) {
++		ret = ppe_o_write(o, PPE_O_NEXTHOP(ret), words, 4);
++		if (ret)
++			goto error;
++	}
++	if (r->out_sid) {
++		ret = ppe_ppp_get(o, r->out_port, r->out_sid, r->eth.h_source);
++		if (ret)
++			goto error;
++		f->out_ppp = true;
++	}
++	return 0;
++error:
++	ppe_egress_put(o, f);
++	return ret;
++}
++
++static int ppe_flow_age(struct ppe_offload *o, struct ppe_flow *f)
++{
++	u32 words[PPE_FLOW_WORDS], age;
++	int ret;
++
++	ret = ppe_o_flow_read(o, f->index, words);
++	if (ret)
++		return ret;
++	age = FIELD_GET(PPE_O_AGE, words[0]);
++	words[0] &= ~PPE_O_AGE;
++	/* Hardware changes DE_ACCE/SYN_TOGGLE on TCP exception processing. */
++	words[1] &= ~(BIT(28) | BIT(30));
++	if (memcmp(words, f->words, sizeof(words)))
++		return -ENOENT;
++	return age;
++}
++
++static void ppe_flow_account(struct ppe_offload *o, struct ppe_flow *f,
++			     struct flow_stats *stats)
++{
++	u64 total, bytes;
++	u32 packets = 0, delta;
++	int age = ppe_flow_age(o, f);
++
++	if (age < 0)
++		return;
++	ppe_o_counter(o, f->index, &packets, &total);
++	delta = packets - f->packets;
++	bytes = (total - f->bytes) & GENMASK_ULL(39, 0);
++	f->packets = packets;
++	f->bytes = total;
++	o->packets += delta;
++	o->bytes += bytes;
++	if (delta || age == 3)
++		f->last_used = jiffies;
++	if (stats)
++		flow_stats_update(stats, bytes, delta, 0, f->last_used,
++				  FLOW_ACTION_HW_STATS_DELAYED);
++}
++
++static void ppe_flow_remove(struct ppe_offload *o, struct ppe_flow *f)
++{
++	int ret;
++
++	lockdep_assert_held(&o->lock);
++	if (!o->failed) {
++		ppe_flow_account(o, f, NULL);
++		ret = ppe_flow_age(o, f);
++		if (ret >= 0)
++			ret = ppe_o_flow_delete(o, f->index);
++		if (ret < 0 && ret != -ENOENT)
++			ppe_o_fail(o, ret);
++	}
++	/* An indeterminate delete has disabled the entire lookup first. */
++	if (!--o->host_refs[f->host] && !o->failed) {
++		ret = ppe_o_host_delete(o, f->host);
++		if (ret && ret != -ENOENT)
++			ppe_o_fail(o, ret);
++	}
++	rhashtable_remove_fast(&o->flows, &f->node, ppe_flow_ht_params);
++	list_del(&f->list);
++	ppe_egress_put(o, f);
++	ppe_ingress_put(o, f);
++	o->live--;
++	o->removed++;
++	kfree_rcu(f, rcu);
++}
++
++void ppe_o_purge_port(struct ppe_offload *o, unsigned int port)
++{
++	struct ppe_flow *f, *tmp;
++
++	list_for_each_entry_safe(f, tmp, &o->flow_list, list)
++		if (f->in_port == port || f->out_port == port)
++			ppe_flow_remove(o, f);
++}
++
++static int ppe_mangle(struct ppe_rule *r, const struct flow_action_entry *a)
++{
++	u32 v, mask, old;
++	void *target;
++
++	switch (a->mangle.htype) {
++	case FLOW_ACT_MANGLE_HDR_TYPE_ETH:
++		if (a->mangle.offset > 8 || a->mangle.offset % 2)
++			return -EOPNOTSUPP;
++		target = (u8 *)&r->eth + a->mangle.offset;
++		memcpy(&old, target, 4);
++		v = (old & a->mangle.mask) | a->mangle.val;
++		memcpy(target, &v, 4);
++		return 0;
++	case FLOW_ACT_MANGLE_HDR_TYPE_IP4:
++		if (a->mangle.mask)
++			return -EOPNOTSUPP;
++		if (a->mangle.offset == offsetof(struct iphdr, saddr))
++			r->new_src = (__force __be32)a->mangle.val;
++		else if (a->mangle.offset == offsetof(struct iphdr, daddr))
++			r->new_dst = (__force __be32)a->mangle.val;
++		else
++			return -EOPNOTSUPP;
++		return 0;
++	case FLOW_ACT_MANGLE_HDR_TYPE_TCP:
++	case FLOW_ACT_MANGLE_HDR_TYPE_UDP:
++		if (a->mangle.offset)
++			return -EOPNOTSUPP;
++		v = ntohl((__force __be32)a->mangle.val);
++		mask = ntohl((__force __be32)a->mangle.mask);
++		if (mask == 0x0000ffff)
++			r->new_sport = htons(v >> 16);
++		else if (mask == 0xffff0000)
++			r->new_dport = htons(v & 0xffff);
++		else
++			return -EOPNOTSUPP;
++		return 0;
++	default:
++		return -EOPNOTSUPP;
++	}
++}
++
++static int ppe_parse_rule(struct ppe_offload *o, struct flow_rule *rule,
++			  struct ppe_rule *r)
++{
++	struct flow_match_meta meta;
++	struct flow_match_basic basic;
++	struct flow_match_control control;
++	struct flow_match_ipv4_addrs ip;
++	struct flow_match_ports ports;
++	const struct flow_action_entry *a;
++	u64 keys = BIT_ULL(FLOW_DISSECTOR_KEY_META) |
++		   BIT_ULL(FLOW_DISSECTOR_KEY_CONTROL) |
++		   BIT_ULL(FLOW_DISSECTOR_KEY_BASIC) |
++		   BIT_ULL(FLOW_DISSECTOR_KEY_IPV4_ADDRS) |
++		   BIT_ULL(FLOW_DISSECTOR_KEY_PORTS);
++	int port, i, ret;
++
++	if ((rule->match.dissector->used_keys & keys) != keys ||
++	    rule->match.dissector->used_keys &
++	    ~(keys | BIT_ULL(FLOW_DISSECTOR_KEY_TCP) |
++		     BIT_ULL(FLOW_DISSECTOR_KEY_PPPOE)))
++		return -EOPNOTSUPP;
++	flow_rule_match_meta(rule, &meta);
++	flow_rule_match_control(rule, &control);
++	flow_rule_match_basic(rule, &basic);
++	flow_rule_match_ipv4_addrs(rule, &ip);
++	flow_rule_match_ports(rule, &ports);
++	if (meta.mask->ingress_ifindex != ~0U ||
++	    control.key->addr_type != FLOW_DISSECTOR_KEY_IPV4_ADDRS ||
++	    control.mask->flags || basic.key->n_proto != htons(ETH_P_IP) ||
++	    basic.mask->n_proto != htons(0xffff) || basic.mask->ip_proto != 0xff ||
++	    ip.mask->src != htonl(~0U) || ip.mask->dst != htonl(~0U) ||
++	    ports.mask->src != htons(0xffff) || ports.mask->dst != htons(0xffff))
++		return -EOPNOTSUPP;
++	if (basic.key->ip_proto != IPPROTO_TCP && basic.key->ip_proto != IPPROTO_UDP)
++		return -EOPNOTSUPP;
++	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_TCP)) {
++		struct flow_match_tcp tcp;
++
++		flow_rule_match_tcp(rule, &tcp);
++		/* FIN and RST are trapped by the APPE exception parser. */
++		if (tcp.key->flags || tcp.mask->flags != htons(0x05))
++			return -EOPNOTSUPP;
++	}
++	port = ppe_o_ifindex(o, meta.key->ingress_ifindex);
++	if (port < 0)
++		return port;
++	r->in_port = port;
++	r->tuple.src = r->new_src = ip.key->src;
++	r->tuple.dst = r->new_dst = ip.key->dst;
++	r->tuple.sport = r->new_sport = ports.key->src;
++	r->tuple.dport = r->new_dport = ports.key->dst;
++	r->tuple.proto = basic.key->ip_proto;
++	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PPPOE)) {
++		struct flow_match_pppoe ppp;
++
++		flow_rule_match_pppoe(rule, &ppp);
++		if (ppp.mask->session_id != htons(0xffff) ||
++		    ppp.key->ppp_proto != htons(PPP_IP))
++			return -EOPNOTSUPP;
++		r->in_sid = ntohs(ppp.key->session_id);
++		if (!r->in_sid)
++			return -EOPNOTSUPP;
++	}
++	flow_action_for_each(i, a, &rule->action) {
++		switch (a->id) {
++		case FLOW_ACTION_MANGLE:
++			ret = ppe_mangle(r, a);
++			if (ret)
++				return ret;
++			break;
++		case FLOW_ACTION_REDIRECT:
++			if (r->out_port)
++				return -EOPNOTSUPP;
++			port = ppe_o_port_index(o, a->dev);
++			if (port < 0)
++				return port;
++			r->out_port = port;
++			break;
++		case FLOW_ACTION_CSUM:
++			if (a->csum_flags & ~(TCA_CSUM_UPDATE_FLAG_IPV4HDR |
++					     TCA_CSUM_UPDATE_FLAG_TCP | TCA_CSUM_UPDATE_FLAG_UDP))
++				return -EOPNOTSUPP;
++			break;
++		case FLOW_ACTION_PPPOE_PUSH:
++			if (r->out_sid || !a->pppoe.sid)
++				return -EOPNOTSUPP;
++			r->out_sid = a->pppoe.sid;
++			break;
++		default:
++			return -EOPNOTSUPP;
++		}
++	}
++	if (!r->out_port || r->in_port == r->out_port ||
++	    !is_valid_ether_addr(r->eth.h_source) || !is_valid_ether_addr(r->eth.h_dest))
++		return -EOPNOTSUPP;
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++		struct ppe_offload_port *p = &o->ports[i];
++
++		if (i != r->in_port && i != r->out_port)
++			continue;
++		if (!p->dev || !netif_running(p->dev) || p->unsupported ||
++		    (p->bridge && (br_vlan_enabled(p->bridge) ||
++				 p->stp_state != BR_STATE_FORWARDING)))
++			return -EOPNOTSUPP;
++	}
++	return 0;
++}
++
++static int ppe_flow_replace(struct ppe_block *block, struct flow_cls_offload *cls)
++{
++	struct ppe_offload *o = block->o;
++	struct ppe_flow_key key = { block->block, cls->cookie };
++	struct ppe_rule r = {};
++	struct ppe_flow *f, *other;
++	u32 words[PPE_FLOW_WORDS] = {}, host[PPE_HOST_WORDS] = {};
++	bool snat, dnat;
++	int ret;
++
++	if (o->failed || o->stopping)
++		return -EIO;
++	f = rhashtable_lookup_fast(&o->flows, &key, ppe_flow_ht_params);
++	if (f) {
++		ret = ppe_flow_age(o, f);
++		if (ret >= 0)
++			return 0;
++		if (ret != -ENOENT) {
++			ppe_o_fail(o, ret);
++			return ret;
++		}
++		ppe_flow_remove(o, f);
++	}
++	ret = ppe_parse_rule(o, flow_cls_offload_flow_rule(cls), &r);
++	if (ret)
++		goto reject;
++	snat = r.new_src != r.tuple.src || r.new_sport != r.tuple.sport;
++	dnat = r.new_dst != r.tuple.dst || r.new_dport != r.tuple.dport;
++	if (snat && dnat) {
++		ret = -EOPNOTSUPP;
++		goto reject;
++	}
++	/* Hardware hashes the tuple, not the ingress interface or flowtable.
++	 * Never replace a different owner's entry with an alias of its key.
++	 */
++	list_for_each_entry(other, &o->flow_list, list) {
++		if (!memcmp(&other->tuple, &r.tuple, sizeof(r.tuple))) {
++			ret = -EEXIST;
++			goto reject;
++		}
++	}
++	f = kzalloc(sizeof(*f), GFP_KERNEL);
++	if (!f)
++		return -ENOMEM;
++	f->key = key;
++	f->tuple = r.tuple;
++	f->nexthop = f->eg_if = f->public_ip = -1;
++	f->in_port = r.in_port;
++	f->out_port = r.out_port;
++	f->in_ppp = !!r.in_sid;
++	ret = ppe_ingress_get(o, &r);
++	if (ret)
++		goto free;
++	ret = ppe_egress_get(o, &r, f, snat, dnat);
++	if (ret)
++		goto ingress;
++	ppe_o_field(words, 0, 1, 1);
++	ppe_o_field(words, 16, 2, r.tuple.proto == IPPROTO_TCP ? 1 : 2);
++	ppe_o_field(words, 18, 2, 3);
++	ppe_o_field(words, 20, 1, 1);
++	ppe_o_field(words, 21, 8, r.in_port + (r.in_sid ? 8 : 0));
++	ppe_o_field(words, 29, 3, snat ? 1 : dnat ? 2 : 3);
++	ppe_o_field(words, 32, 12, f->nexthop);
++	if (snat || dnat)
++		ppe_o_field(words, 44, 16, ntohs(snat ? r.new_sport : r.new_dport));
++	ppe_o_field(words, 76, 32, ntohl(r.tuple.dst));
++	ppe_o_field(words, 108, 16, ntohs(r.tuple.sport));
++	ppe_o_field(words, 124, 16, ntohs(r.tuple.dport));
++	/* APPE has a per-flow L3 PMTU check (HPPE's entry ends before it). */
++	ppe_o_field(words, 148, 1, 1);
++	ppe_o_field(words, 149, 14, o->ports[r.out_port].dev->mtu -
++				   (r.out_sid ? PPPOE_SES_HLEN : 0));
++	ppe_o_field(host, 0, 1, 1);
++	ppe_o_field(host, 32, 32, ntohl(r.tuple.src));
++	ret = ppe_o_flow_add(o, words, host, &f->index, &f->host);
++	if (ret) {
++		/* A failed hash insertion is ordinary exhaustion. A timeout may
++		 * have inserted a flow, so stop lookup before releasing tables.
++		 */
++		if (ret != -ENOENT)
++			ppe_o_fail(o, ret);
++		goto egress;
++	}
++	o->host_refs[f->host]++;
++	ppe_o_field(words, 3, 13, f->host);
++	words[0] &= ~PPE_O_AGE;
++	memcpy(f->words, words, sizeof(words));
++	/* Start with a baseline, not a clear that could lose an active hit. */
++	ppe_o_counter(o, f->index, &f->packets, &f->bytes);
++	f->last_used = jiffies;
++	ret = rhashtable_insert_fast(&o->flows, &f->node, ppe_flow_ht_params);
++	if (ret) {
++		int del = ppe_o_flow_delete(o, f->index);
++
++		if (del && del != -ENOENT)
++			ppe_o_fail(o, del);
++		if (!--o->host_refs[f->host] && !o->failed)
++			ppe_o_host_delete(o, f->host);
++		goto egress;
++	}
++	list_add_tail(&f->list, &o->flow_list);
++	o->installed++;
++	o->live++;
++	return 0;
++egress:
++	ppe_egress_put(o, f);
++ingress:
++	ppe_ingress_put(o, f);
++free:
++	kfree(f);
++reject:
++	o->rejected++;
++	return ret;
++}
++
++static int ppe_block_cb(enum tc_setup_type type, void *data, void *priv)
++{
++	struct ppe_block *block = priv;
++	struct flow_cls_offload *cls = data;
++	struct ppe_offload *o = block->o;
++	struct ppe_flow_key key = { block->block, cls->cookie };
++	struct ppe_flow *f;
++	int ret = 0;
++
++	if (type != TC_SETUP_CLSFLOWER)
++		return -EOPNOTSUPP;
++	mutex_lock(&o->lock);
++	if (cls->command == FLOW_CLS_REPLACE) {
++		ret = ppe_flow_replace(block, cls);
++		goto out;
++	}
++	f = rhashtable_lookup_fast(&o->flows, &key, ppe_flow_ht_params);
++	if (!f) {
++		ret = -ENOENT;
++		goto out;
++	}
++	switch (cls->command) {
++	case FLOW_CLS_DESTROY:
++		ppe_flow_remove(o, f);
++		break;
++	case FLOW_CLS_STATS:
++		if (!o->failed)
++			ppe_flow_account(o, f, &cls->stats);
++		break;
++	default:
++		ret = -EOPNOTSUPP;
++	}
++out:
++	mutex_unlock(&o->lock);
++	return ret;
++}
++
++static void ppe_block_release(void *priv)
++{
++	struct ppe_block *block = priv;
++	struct ppe_offload *o = block->o;
++	struct ppe_flow *f, *tmp;
++
++	mutex_lock(&o->lock);
++	list_for_each_entry_safe(f, tmp, &o->flow_list, list)
++		if (f->key.block == block->block)
++			ppe_flow_remove(o, f);
++	list_del(&block->list);
++	mutex_unlock(&o->lock);
++	kfree(block);
++}
++
++static LIST_HEAD(ppe_block_list);
++
++int ppe_offload_setup_tc(struct net_device *dev, enum tc_setup_type type, void *data)
++{
++	struct edma_port_priv *port = netdev_priv(dev);
++	struct ppe_offload *o = port->ppe_port->ppe_dev->offload;
++	struct flow_block_offload *f = data;
++	struct flow_block_cb *cb;
++	struct ppe_block *block;
++
++	if (!o || type != TC_SETUP_FT ||
++	    f->binder_type != FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
++		return -EOPNOTSUPP;
++	f->driver_block_list = &ppe_block_list;
++	cb = flow_block_cb_lookup(f->block, ppe_block_cb, o);
++	switch (f->command) {
++	case FLOW_BLOCK_BIND:
++		if (o->stopping || o->failed)
++			return -EIO;
++		if (cb) {
++			flow_block_cb_incref(cb);
++			return 0;
++		}
++		block = kzalloc(sizeof(*block), GFP_KERNEL);
++		if (!block)
++			return -ENOMEM;
++		block->o = o;
++		block->block = f->block;
++		cb = flow_block_cb_alloc(ppe_block_cb, o, block, ppe_block_release);
++		if (IS_ERR(cb)) {
++			kfree(block);
++			return PTR_ERR(cb);
++		}
++		mutex_lock(&o->lock);
++		list_add_tail(&block->list, &o->blocks);
++		mutex_unlock(&o->lock);
++		flow_block_cb_incref(cb);
++		flow_block_cb_add(cb, f);
++		list_add_tail(&cb->driver_list, &ppe_block_list);
++		return 0;
++	case FLOW_BLOCK_UNBIND:
++		if (!cb)
++			return -ENOENT;
++		if (!flow_block_cb_decref(cb)) {
++			flow_block_cb_remove(cb, f);
++			list_del(&cb->driver_list);
++		}
++		return 0;
++	default:
++		return -EOPNOTSUPP;
++	}
++}
++
++static int ppe_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
++{
++	struct ppe_offload *o = container_of(nb, struct ppe_offload, netdev_nb);
++	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
++	int i;
++
++	/* PPP session destruction/redial and topology/MAC/MTU changes must not
++	 * leave autonomous forwarding behind. Linux can reinstall live flows.
++	 */
++	switch (event) {
++	case NETDEV_DOWN:
++	case NETDEV_UNREGISTER:
++	case NETDEV_CHANGEADDR:
++	case NETDEV_CHANGEMTU:
++	case NETDEV_CHANGEUPPER:
++	case NETDEV_FEAT_CHANGE:
++		mutex_lock(&o->lock);
++		for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++			if (o->ports[i].dev == dev || o->ports[i].bridge == dev ||
++			    dev->type == ARPHRD_PPP)
++				ppe_o_purge_port(o, i);
++		mutex_unlock(&o->lock);
++		break;
++	default:
++		break;
++	}
++	return ppe_o_bridge_event(o, dev, event, ptr);
++}
++
++static int ppe_offload_show(struct seq_file *s, void *unused)
++{
++	struct ppe_offload *o = s->private;
++	struct ppe_flow *f;
++	u64 bytes, total_bytes, total_packets;
++	u32 pkts;
++	int i;
++
++	mutex_lock(&o->lock);
++	total_packets = o->packets;
++	total_bytes = o->bytes;
++	if (!o->failed)
++		list_for_each_entry(f, &o->flow_list, list) {
++			if (ppe_flow_age(o, f) < 0)
++				continue;
++			ppe_o_counter(o, f->index, &pkts, &bytes);
++			total_packets += (u32)(pkts - f->packets);
++			total_bytes += (bytes - f->bytes) & GENMASK_ULL(39, 0);
++		}
++	seq_printf(s, "enabled %u\nlive_flows %u\ninstalled %u\nremoved %u\n",
++		   !o->failed, o->live, o->installed, o->removed);
++	seq_printf(s, "rejected %u\nhardware_errors %u\nfdb_entries %u\n",
++		   o->rejected, o->hw_errors, o->fdb_entries);
++	seq_printf(s, "hardware_packets %llu\nhardware_bytes %llu\n",
++		   total_packets, total_bytes);
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++		struct ppe_offload_port *p = &o->ports[i];
++
++		if (!p->dev)
++			continue;
++		seq_printf(s, "%s port=%d vsi=%u stp=%u pppoe=%u refs=%u/%u\n",
++			   p->dev->name, i, p->vsi, p->stp_state, p->ppp_sid,
++			   p->if_refs, p->ppp_refs);
++	}
++	mutex_unlock(&o->lock);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(ppe_offload);
++
++void ppe_offload_debugfs(struct ppe_device *ppe)
++{
++	if (ppe->offload)
++		debugfs_create_file("offload", 0400, ppe->debugfs_root,
++				    ppe->offload, &ppe_offload_fops);
++}
++
++void ppe_offload_port_set(struct ppe_device *ppe, int port, struct net_device *dev)
++{
++	struct ppe_offload *o = ppe->offload;
++
++	if (!o)
++		return;
++	mutex_lock(&o->lock);
++	o->ports[port].dev = dev;
++	if (dev) {
++		dev->hw_features |= NETIF_F_HW_TC;
++		dev->features |= NETIF_F_HW_TC;
++	}
++	mutex_unlock(&o->lock);
++}
++
++int ppe_offload_init(struct ppe_device *ppe)
++{
++	struct ppe_offload *o;
++	int ret;
++
++	o = devm_kzalloc(ppe->dev, sizeof(*o), GFP_KERNEL);
++	if (!o)
++		return -ENOMEM;
++	o->nexthops = devm_kcalloc(ppe->dev, PPE_NH_SLOTS, sizeof(*o->nexthops), GFP_KERNEL);
++	o->egress_ifs = devm_kcalloc(ppe->dev, PPE_IF_SLOTS, sizeof(*o->egress_ifs), GFP_KERNEL);
++	if (!o->nexthops || !o->egress_ifs)
++		return -ENOMEM;
++	o->ppe = ppe;
++	o->regmap = ppe->regmap;
++	mutex_init(&o->lock);
++	INIT_LIST_HEAD(&o->flow_list);
++	INIT_LIST_HEAD(&o->fdb_list);
++	INIT_LIST_HEAD(&o->blocks);
++	ret = rhashtable_init(&o->flows, &ppe_flow_ht_params);
++	if (ret)
++		return ret;
++	ret = ppe_o_hw_init(o);
++	if (ret)
++		goto hash;
++	ret = ppe_o_switchdev_init(o);
++	if (ret)
++		goto hash;
++	o->netdev_nb.notifier_call = ppe_netdev_event;
++	ret = register_netdevice_notifier(&o->netdev_nb);
++	if (ret)
++		goto switchdev;
++	ppe->offload = o;
++	dev_info(ppe->dev, "APPE wired bridge and IPv4 NAT/PPPoE offload ready\n");
++	return 0;
++switchdev:
++	ppe_o_switchdev_exit(o);
++hash:
++	rhashtable_destroy(&o->flows);
++	return ret;
++}
++
++void ppe_offload_exit(struct ppe_device *ppe)
++{
++	struct ppe_offload *o = ppe->offload;
++	struct ppe_flow *f, *tmp;
++
++	if (!o)
++		return;
++	unregister_netdevice_notifier(&o->netdev_nb);
++	ppe_o_switchdev_exit(o);
++	mutex_lock(&o->lock);
++	o->stopping = true;
++	list_for_each_entry_safe(f, tmp, &o->flow_list, list)
++		ppe_flow_remove(o, f);
++	regmap_update_bits(o->regmap, PPE_O_FLOW_CTRL, PPE_O_FLOW_ENABLE, 0);
++	WARN_ON(!list_empty(&o->blocks));
++	mutex_unlock(&o->lock);
++	rhashtable_destroy(&o->flows);
++	ppe->offload = NULL;
++}
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
+new file mode 100644
+index 0000000..d6f366f
+--- /dev/null
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
+@@ -0,0 +1,173 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later OR MIT */
++/* IPQ9574 APPE offload. Register layout follows the APPE SSDK interface. */
++#ifndef __PPE_OFFLOAD_H__
++#define __PPE_OFFLOAD_H__
++
++#include <linux/bitfield.h>
++#include <linux/etherdevice.h>
++#include <linux/mutex.h>
++#include <linux/netdevice.h>
++#include <linux/regmap.h>
++#include <linux/rhashtable.h>
++#include <linux/workqueue.h>
++
++#include "ppe.h"
++
++#define PPE_OFFLOAD_PORTS	8
++#define PPE_FLOW_SLOTS		4096
++#define PPE_HOST_SLOTS		6144
++#define PPE_NH_SLOTS		2560
++#define PPE_IF_SLOTS		256
++#define PPE_FLOW_WORDS		6
++#define PPE_HOST_WORDS		3
++#define PPE_INGRESS_IFS		16
++
++#define PPE_O_L3			0x200000
++#define PPE_O_FLOW_CTRL		(PPE_O_L3 + 0x4a8)
++#define PPE_O_FLOW_DIR(t)		(PPE_O_L3 + 0x4bc + (t) * 4)
++#define PPE_O_FLOW_ENABLE	BIT(0)
++#define PPE_O_FLOW_OP		(PPE_O_L3 + 0x528)
++#define PPE_O_FLOW_HOST_OP	(PPE_O_L3 + 0x53c)
++#define PPE_O_FLOW_DATA		(PPE_O_L3 + 0x550)
++#define PPE_O_FLOW_HOST_DATA	(PPE_O_L3 + 0x58c)
++#define PPE_O_FLOW_RESULT	(PPE_O_L3 + 0x5c4)
++#define PPE_O_FLOW_HOST_RESULT	(PPE_O_L3 + 0x5d8)
++#define PPE_O_FLOW_READ		(PPE_O_L3 + 0x5ec)
++#define PPE_O_FLOW_READ_RESULT	(PPE_O_L3 + 0x688)
++#define PPE_O_FLOW_READ_DATA	(PPE_O_L3 + 0x6b0)
++#define PPE_O_HOST_OP		(PPE_O_L3 + 0x724)
++#define PPE_O_HOST_RESULT	(PPE_O_L3 + 0x770)
++#define PPE_O_FLOW_TABLE(i)	(PPE_O_L3 + 0x40000 + (i) * 0x20)
++#define PPE_O_FLOW_COUNTER(i)	(0x120000 + (i) * 0x10)
++#define PPE_O_NEXTHOP(i)		(PPE_O_L3 + 0x60000 + (i) * 0x20)
++#define PPE_O_PUBLIC_IP(i)	(PPE_O_L3 + 0x4d8 + (i) * 4)
++#define PPE_O_IN_IF(i)		(PPE_O_L3 + 0x6000 + (i) * 0x10)
++#define PPE_O_EG_IF(i)		(0x23000 + (i) * 0x10)
++#define PPE_O_MY_MAC(i)		(PPE_O_L3 + (i) * 8)
++#define PPE_O_L3_PORT(i)		(PPE_O_L3 + 0x4000 + (i) * 0x10)
++#define PPE_O_VSI(i)		(0x63800 + (i) * 0x10)
++#define PPE_O_L2_PORT(i)		(0x98000 + (i) * 0x10)
++#define PPE_O_PPPOE(i)		(PPE_O_L3 + 0x6800 + (i) * 8)
++#define PPE_O_PPPOE_EXT(i)	(PPE_O_L3 + 0x6a00 + (i) * 4)
++#define PPE_O_PPPOE_EXT1(i)	(PPE_O_L3 + 0x6c00 + (i) * 4)
++#define PPE_O_PPPOE_EXT2(i)	(PPE_O_L3 + 0x6e00 + (i) * 4)
++
++#define PPE_O_CMD_ID		GENMASK(3, 0)
++#define PPE_O_CMD_TYPE		GENMASK(7, 5)
++#define PPE_O_CMD_HASH		GENMASK(9, 8)
++#define PPE_O_CMD_INDEX		BIT(10)
++#define PPE_O_CMD_HOST		BIT(11)
++#define PPE_O_CMD_FLOW_INDEX	GENMASK(23, 12)
++#define PPE_O_RESULT_FAIL		BIT(4)
++#define PPE_O_RESULT_INDEX	GENMASK(16, 5)
++#define PPE_O_RESULT_COUNT	GENMASK(20, 17)
++#define PPE_O_AGE		GENMASK(19, 18)
++#define PPE_O_HOST_INDEX		GENMASK(15, 3)
++#define PPE_O_ADD		0
++#define PPE_O_DELETE		1
++#define PPE_O_GET		2
++
++struct ppe_resource {
++	u32 refs;
++	u32 words[4];
++};
++
++struct ppe_offload_port {
++	struct net_device *dev;
++	struct net_device *bridge;
++	u8 stp_state;
++	u8 vsi;
++	bool bridge_offloaded;
++	bool unsupported;
++	u32 if_refs;
++	u32 ppp_refs;
++	u16 ppp_sid;
++	u8 ppp_mac[ETH_ALEN];
++};
++
++struct ppe_offload {
++	struct ppe_device *ppe;
++	struct regmap *regmap;
++	/* Serializes all hardware tables, resource ownership and topology. */
++	struct mutex lock;
++	struct ppe_offload_port ports[PPE_OFFLOAD_PORTS];
++	struct ppe_resource *nexthops;
++	struct ppe_resource *egress_ifs;
++	struct ppe_resource public_ips[16];
++	u32 host_refs[PPE_HOST_SLOTS];
++	struct rhashtable flows;
++	struct list_head flow_list;
++	struct list_head fdb_list;
++	struct list_head blocks;
++	struct notifier_block netdev_nb;
++	struct notifier_block switchdev_nb;
++	struct notifier_block switchdev_blocking_nb;
++	struct workqueue_struct *wq;
++	u8 cmd_id;
++	u8 fdb_cmd_id;
++	bool failed;
++	bool stopping;
++	u32 installed;
++	u32 removed;
++	u32 rejected;
++	u32 hw_errors;
++	u32 live;
++	u32 fdb_entries;
++	u64 packets;
++	u64 bytes;
++};
++
++/* Fields in APPE tables are little-endian bit strings spanning u32 words. */
++static inline void ppe_o_field(u32 *words, unsigned int off,
++			       unsigned int len, u64 value)
++{
++	while (len) {
++		unsigned int bit = off % 32;
++		unsigned int n = min(32 - bit, len);
++		u32 mask = GENMASK(bit + n - 1, bit);
++
++		words[off / 32] = (words[off / 32] & ~mask) |
++				 ((u32)(value << bit) & mask);
++		value >>= n;
++		off += n;
++		len -= n;
++	}
++}
++
++int ppe_o_write(struct ppe_offload *o, u32 reg, const u32 *w, int n);
++int ppe_o_clear(struct ppe_offload *o, u32 reg, int n);
++int ppe_o_flow_add(struct ppe_offload *o, const u32 *flow, const u32 *host,
++		   u32 *index, u32 *host_index);
++int ppe_o_flow_read(struct ppe_offload *o, u32 index, u32 *words);
++int ppe_o_flow_delete(struct ppe_offload *o, u32 index);
++int ppe_o_host_delete(struct ppe_offload *o, u32 index);
++void ppe_o_counter(struct ppe_offload *o, u32 index, u32 *packets, u64 *bytes);
++void ppe_o_fail(struct ppe_offload *o, int error);
++int ppe_o_hw_init(struct ppe_offload *o);
++int ppe_o_port_vsi(struct ppe_offload *o, unsigned int port, u8 vsi);
++void ppe_o_purge_port(struct ppe_offload *o, unsigned int port);
++int ppe_o_port_index(struct ppe_offload *o, const struct net_device *dev);
++int ppe_o_switchdev_init(struct ppe_offload *o);
++void ppe_o_switchdev_exit(struct ppe_offload *o);
++int ppe_o_bridge_event(struct ppe_offload *o, struct net_device *dev,
++		       unsigned long event, void *ptr);
++
++#if IS_ENABLED(CONFIG_QCOM_PPE_OFFLOAD)
++int ppe_offload_init(struct ppe_device *ppe);
++void ppe_offload_exit(struct ppe_device *ppe);
++void ppe_offload_debugfs(struct ppe_device *ppe);
++void ppe_offload_port_set(struct ppe_device *ppe, int port, struct net_device *dev);
++int ppe_offload_setup_tc(struct net_device *dev, enum tc_setup_type type, void *data);
++#else
++static inline int ppe_offload_init(struct ppe_device *ppe) { return 0; }
++static inline void ppe_offload_exit(struct ppe_device *ppe) {}
++static inline void ppe_offload_debugfs(struct ppe_device *ppe) {}
++static inline void ppe_offload_port_set(struct ppe_device *ppe, int port,
++					struct net_device *dev) {}
++static inline int ppe_offload_setup_tc(struct net_device *dev,
++				      enum tc_setup_type type, void *data)
++{
++	return -EOPNOTSUPP;
++}
++#endif
++#endif
+diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
+new file mode 100644
+index 0000000..272f6cc
+--- /dev/null
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
+@@ -0,0 +1,427 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
++/* IPQ9574 known-unicast bridge offload. Linux owns learning and aging.
++ * Unknown unicast, multicast and broadcast go only to the CPU; the software
++ * bridge then floods them, including to wireless ports, exactly once.
++ */
++
++#include <linux/delay.h>
++#include <linux/if_bridge.h>
++#include <linux/rtnetlink.h>
++#include <net/switchdev.h>
++
++#include "ppe_offload.h"
++
++struct ppe_fdb {
++	struct list_head list;
++	u8 addr[ETH_ALEN];
++	u8 vsi;
++	u8 port;
++};
++
++struct ppe_fdb_work {
++	struct work_struct work;
++	struct ppe_offload *o;
++	struct net_device *dev;
++	u8 addr[ETH_ALEN];
++	u16 vid;
++	bool add;
++	bool local;
++};
++
++static int ppe_fdb_command(struct ppe_offload *o, const u8 *addr,
++			    int vsi, int port, bool add)
++{
++	u32 words[3] = {}, value, cmd;
++	int ret, i;
++
++	ppe_o_field(words, 0, 48, ether_addr_to_u64(addr));
++	ppe_o_field(words, 48, 1, 1);
++	ppe_o_field(words, 49, 1, 1);
++	ppe_o_field(words, 50, 6, vsi);
++	ppe_o_field(words, 56, 14, (2 << 12) | port);
++	ppe_o_field(words, 74, 2, 3); /* Linux deletes these static HW entries. */
++	ret = ppe_o_write(o, 0x60230, words, 3);
++	if (ret)
++		return ret;
++	o->fdb_cmd_id = o->fdb_cmd_id % 15 + 1;
++	cmd = o->fdb_cmd_id | FIELD_PREP(GENMASK(7, 5), add ? 0 : 1) |
++	      FIELD_PREP(GENMASK(9, 8), 3);
++	ret = regmap_write(o->regmap, 0x60008, cmd);
++	if (ret)
++		return ret;
++	for (i = 0; i < 1000; i++) {
++		ret = regmap_read(o->regmap, 0x60020, &value);
++		if (ret)
++			return ret;
++		if ((value & GENMASK(8, 5)) && (value & 15) == o->fdb_cmd_id)
++			return value & BIT(4) ? -ENOENT : 0;
++		udelay(1);
++	}
++	return -ETIMEDOUT;
++}
++
++static void ppe_fdb_flush_port(struct ppe_offload *o, int vsi, int port)
++{
++	struct ppe_fdb *f, *tmp;
++	int ret;
++
++	list_for_each_entry_safe(f, tmp, &o->fdb_list, list) {
++		if (f->vsi != vsi || (port >= 0 && f->port != port))
++			continue;
++		ret = ppe_fdb_command(o, f->addr, f->vsi, f->port, false);
++		if (ret && ret != -ENOENT)
++			ppe_o_fail(o, ret);
++		list_del(&f->list);
++		kfree(f);
++		o->fdb_entries--;
++	}
++}
++
++static bool ppe_bridge_port_ok(struct ppe_offload_port *p)
++{
++	return p->bridge && !br_vlan_enabled(p->bridge) && !p->unsupported &&
++	       p->stp_state == BR_STATE_FORWARDING;
++}
++
++static int ppe_bridge_update(struct ppe_offload *o, u8 vsi)
++{
++	u32 membership = BIT(0), words[2] = {}, l2port[4];
++	int i, ret;
++
++	if (!vsi || o->failed)
++		return 0;
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++		if (o->ports[i].vsi == vsi && ppe_bridge_port_ok(&o->ports[i]))
++			membership |= BIT(i);
++	/* No physical-port flooding: each CPU-delivered frame is untouched by
++	 * HW forwarding, so EDMA must not set skb->offload_fwd_mark.
++	 */
++	words[0] = membership | BIT(8) | BIT(16) | BIT(24);
++	words[1] = (3 << 1) | (3 << 4); /* New/moved source: trap to Linux. */
++	ret = ppe_o_write(o, PPE_O_VSI(vsi), words, 2);
++	if (ret)
++		return ret;
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++		if (o->ports[i].vsi != vsi)
++			continue;
++		if (!(membership & BIT(i)))
++			ppe_fdb_flush_port(o, vsi, i);
++		ret = regmap_bulk_read(o->regmap, PPE_O_L2_PORT(i), l2port, 4);
++		if (ret)
++			return ret;
++		ppe_o_field(l2port, 13, 1, 0);
++		ppe_o_field(l2port, 14, 2, 3);
++		ppe_o_field(l2port, 16, 1, 0);
++		ppe_o_field(l2port, 17, 2, 3);
++		ret = ppe_o_write(o, PPE_O_L2_PORT(i), l2port, 4);
++		if (ret)
++			return ret;
++		ret = ppe_o_port_vsi(o, i, membership & BIT(i) ? vsi : 0);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static struct net_device *ppe_bridge_master(struct net_device *dev)
++{
++	if (netif_is_bridge_master(dev))
++		return dev;
++	dev = netdev_master_upper_dev_get(dev);
++	return dev && netif_is_bridge_master(dev) ? dev : NULL;
++}
++
++static void ppe_fdb_work(struct work_struct *work)
++{
++	struct ppe_fdb_work *w = container_of(work, struct ppe_fdb_work, work);
++	struct ppe_offload *o = w->o;
++	struct net_device *bridge;
++	struct ppe_fdb *f, *found = NULL;
++	int i, port, vsi = 0, ret;
++
++	rtnl_lock();
++	mutex_lock(&o->lock);
++	if (o->failed || o->stopping || w->vid)
++		goto out;
++	bridge = ppe_bridge_master(w->dev);
++	if (!bridge || br_vlan_enabled(bridge))
++		goto out;
++	for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++		if (o->ports[i].bridge == bridge) {
++			vsi = o->ports[i].vsi;
++			break;
++		}
++	if (!vsi)
++		goto out;
++	port = ppe_o_port_index(o, w->dev);
++	if (port < 0 || w->local)
++		port = 0;
++	if (port && !ppe_bridge_port_ok(&o->ports[port]))
++		goto out;
++	list_for_each_entry(f, &o->fdb_list, list)
++		if (f->vsi == vsi && ether_addr_equal(f->addr, w->addr)) {
++			found = f;
++			break;
++		}
++	if (!w->add) {
++		/* An old port's delete must not remove a later MAC move. */
++		if (!found || found->port != port)
++			goto out;
++		ret = ppe_fdb_command(o, w->addr, vsi, port, false);
++		if (ret && ret != -ENOENT)
++			ppe_o_fail(o, ret);
++		list_del(&found->list);
++		kfree(found);
++		o->fdb_entries--;
++		goto out;
++	}
++	if (!found) {
++		found = kzalloc(sizeof(*found), GFP_KERNEL);
++		if (!found)
++			goto out;
++		ether_addr_copy(found->addr, w->addr);
++		found->vsi = vsi;
++		list_add_tail(&found->list, &o->fdb_list);
++		o->fdb_entries++;
++	}
++	ret = ppe_fdb_command(o, w->addr, vsi, port, true);
++	if (ret) {
++		ppe_o_fail(o, ret);
++		goto out;
++	}
++	found->port = port;
++	if (port) {
++		struct switchdev_notifier_fdb_info info = {
++			.addr = w->addr,
++			.vid = 0,
++			.offloaded = true,
++		};
++
++		call_switchdev_notifiers(SWITCHDEV_FDB_OFFLOADED, w->dev, &info.info, NULL);
++	}
++out:
++	mutex_unlock(&o->lock);
++	rtnl_unlock();
++	dev_put(w->dev);
++	kfree(w);
++}
++
++static int ppe_switchdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
++{
++	struct ppe_offload *o = container_of(nb, struct ppe_offload, switchdev_nb);
++	struct switchdev_notifier_fdb_info *info = ptr;
++	struct net_device *dev = switchdev_notifier_info_to_dev(ptr);
++	struct ppe_fdb_work *w;
++
++	if (event != SWITCHDEV_FDB_ADD_TO_DEVICE && event != SWITCHDEV_FDB_DEL_TO_DEVICE)
++		return NOTIFY_DONE;
++	if (info->info.ctx && info->info.ctx != o)
++		return NOTIFY_DONE;
++	/* Unoffloading one port replays deletion of the whole bridge FDB.
++	 * The shared PPE table is retired explicitly by bridge_event instead.
++	 */
++	if (info->info.ctx && event == SWITCHDEV_FDB_DEL_TO_DEVICE)
++		return NOTIFY_DONE;
++	if (info->vid || !is_valid_ether_addr(info->addr))
++		return NOTIFY_DONE;
++	w = kzalloc(sizeof(*w), GFP_ATOMIC);
++	if (!w)
++		return notifier_from_errno(-ENOMEM);
++	w->o = o;
++	w->dev = dev;
++	w->vid = info->vid;
++	w->local = info->is_local;
++	w->add = event == SWITCHDEV_FDB_ADD_TO_DEVICE;
++	ether_addr_copy(w->addr, info->addr);
++	dev_hold(dev);
++	INIT_WORK(&w->work, ppe_fdb_work);
++	queue_work(o->wq, &w->work);
++	return NOTIFY_DONE;
++}
++
++static int ppe_switchdev_blocking(struct notifier_block *nb, unsigned long event, void *ptr)
++{
++	struct ppe_offload *o = container_of(nb, struct ppe_offload, switchdev_blocking_nb);
++	struct net_device *dev = switchdev_notifier_info_to_dev(ptr);
++	struct switchdev_notifier_port_attr_info *info = ptr;
++	const struct switchdev_attr *attr;
++	int port, i, ret = 0;
++
++	if (event != SWITCHDEV_PORT_ATTR_SET)
++		return NOTIFY_DONE;
++	attr = info->attr;
++	mutex_lock(&o->lock);
++	port = ppe_o_port_index(o, dev);
++	if (port < 0 && !netif_is_bridge_master(dev))
++		goto out;
++	switch (attr->id) {
++	case SWITCHDEV_ATTR_ID_PORT_STP_STATE:
++		if (port < 0)
++			goto out;
++		o->ports[port].stp_state = attr->u.stp_state;
++		ppe_o_purge_port(o, port);
++		ret = ppe_bridge_update(o, o->ports[port].vsi);
++		break;
++	case SWITCHDEV_ATTR_ID_BRIDGE_VLAN_FILTERING:
++		/* VLAN-aware bridges stay entirely in software. This notifier
++		 * runs before the bridge flag changes, so retire classification
++		 * synchronously rather than testing br_vlan_enabled() here.
++		 */
++		for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++			if (o->ports[i].bridge != attr->orig_dev)
++				continue;
++			ppe_o_purge_port(o, i);
++			o->ports[i].unsupported = true;
++			ppe_fdb_flush_port(o, o->ports[i].vsi, -1);
++			ret = ppe_bridge_update(o, o->ports[i].vsi);
++		}
++		break;
++	case SWITCHDEV_ATTR_ID_PORT_PRE_BRIDGE_FLAGS:
++		if (port >= 0 && attr->u.brport_flags.mask & ~(BR_LEARNING | BR_FLOOD |
++						BR_MCAST_FLOOD | BR_BCAST_FLOOD)) {
++			o->ports[port].unsupported = true;
++			ppe_o_purge_port(o, port);
++			ret = ppe_bridge_update(o, o->ports[port].vsi);
++		}
++		break;
++	case SWITCHDEV_ATTR_ID_PORT_BRIDGE_FLAGS:
++		if (port < 0)
++			goto out;
++		/* Unsupported forwarding policies fall back without rejecting
++		 * the Linux configuration. Rejoin the bridge to re-enable HW.
++		 */
++		if (attr->u.brport_flags.mask & ~(BR_LEARNING | BR_FLOOD |
++						BR_MCAST_FLOOD | BR_BCAST_FLOOD))
++			o->ports[port].unsupported = true;
++		ppe_o_purge_port(o, port);
++		ret = ppe_bridge_update(o, o->ports[port].vsi);
++		break;
++	default:
++		goto out;
++	}
++	info->handled = true;
++	if (ret)
++		ppe_o_fail(o, ret);
++out:
++	mutex_unlock(&o->lock);
++	return notifier_from_errno(ret);
++}
++
++int ppe_o_bridge_event(struct ppe_offload *o, struct net_device *dev,
++		       unsigned long event, void *ptr)
++{
++	struct netdev_notifier_changeupper_info *info = ptr;
++	struct ppe_offload_port *p;
++	bool join = false, leave = false;
++	unsigned long used = 0;
++	int port, i, ret = 0;
++	u8 vsi = 0;
++
++	if (event != NETDEV_CHANGEUPPER)
++		return NOTIFY_DONE;
++	port = ppe_o_port_index(o, dev);
++	if (port < 0 || !info->master)
++		return NOTIFY_DONE;
++	p = &o->ports[port];
++	mutex_lock(&o->lock);
++	if (!netif_is_bridge_master(info->upper_dev)) {
++		p->unsupported = info->linking;
++		goto out;
++	}
++	if (info->linking) {
++		for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
++			used |= BIT(o->ports[i].vsi);
++			if (o->ports[i].bridge == info->upper_dev)
++				vsi = o->ports[i].vsi;
++		}
++		if (!vsi) {
++			for (i = 8; i < 16; i++)
++				if (!(used & BIT(i))) {
++					vsi = i;
++					break;
++				}
++		}
++		if (!vsi)
++			goto out;
++		p->bridge = info->upper_dev;
++		dev_hold(p->bridge);
++		p->vsi = vsi;
++		p->stp_state = br_port_get_stp_state(dev);
++		p->unsupported = br_vlan_enabled(p->bridge) ||
++			br_port_flag_is_set(dev, BR_HAIRPIN_MODE | BR_ISOLATED | BR_PORT_LOCKED);
++		ret = ppe_bridge_update(o, vsi);
++		join = !ret;
++	} else if (p->bridge) {
++		vsi = p->vsi;
++		ppe_fdb_flush_port(o, vsi, port);
++		ppe_o_port_vsi(o, port, 0);
++		dev_put(p->bridge);
++		p->bridge = NULL;
++		p->vsi = 0;
++		p->unsupported = false;
++		ret = ppe_bridge_update(o, vsi);
++		for (i = 1; i < PPE_OFFLOAD_PORTS; i++)
++			if (o->ports[i].vsi == vsi)
++				break;
++		if (i == PPE_OFFLOAD_PORTS)
++			ppe_fdb_flush_port(o, vsi, -1);
++		leave = p->bridge_offloaded;
++		p->bridge_offloaded = false;
++	}
++out:
++	if (ret)
++		ppe_o_fail(o, ret);
++	mutex_unlock(&o->lock);
++	/* Replay calls our notifiers, so it must run outside o->lock. */
++	if (join) {
++		ret = switchdev_bridge_port_offload(dev, dev, o,
++						   &o->switchdev_nb,
++						   &o->switchdev_blocking_nb, false, NULL);
++		mutex_lock(&o->lock);
++		p->bridge_offloaded = !ret;
++		if (ret) {
++			p->unsupported = true;
++			ppe_bridge_update(o, p->vsi);
++		}
++		mutex_unlock(&o->lock);
++	} else if (leave) {
++		switchdev_bridge_port_unoffload(dev, o, &o->switchdev_nb,
++					       &o->switchdev_blocking_nb);
++	}
++	return NOTIFY_DONE;
++}
++
++int ppe_o_switchdev_init(struct ppe_offload *o)
++{
++	int ret;
++
++	o->wq = alloc_ordered_workqueue("ppe_fdb", 0);
++	if (!o->wq)
++		return -ENOMEM;
++	o->switchdev_nb.notifier_call = ppe_switchdev_event;
++	o->switchdev_blocking_nb.notifier_call = ppe_switchdev_blocking;
++	ret = register_switchdev_notifier(&o->switchdev_nb);
++	if (ret)
++		goto work;
++	ret = register_switchdev_blocking_notifier(&o->switchdev_blocking_nb);
++	if (!ret)
++		return 0;
++	unregister_switchdev_notifier(&o->switchdev_nb);
++work:
++	destroy_workqueue(o->wq);
++	return ret;
++}
++
++void ppe_o_switchdev_exit(struct ppe_offload *o)
++{
++	int i;
++
++	unregister_switchdev_blocking_notifier(&o->switchdev_blocking_nb);
++	unregister_switchdev_notifier(&o->switchdev_nb);
++	destroy_workqueue(o->wq);
++	mutex_lock(&o->lock);
++	for (i = 8; i < 16; i++)
++		ppe_fdb_flush_port(o, i, -1);
++	mutex_unlock(&o->lock);
++}

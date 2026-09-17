@@ -74,7 +74,7 @@ define Device/xiaomi_be7000
 	SUPPORTED_DEVICES := xiaomi,be7000
 	SOC := ipq9574
 	KERNEL_LOADADDR := 0x42000000
-	DEVICE_PACKAGES := -uboot-envtools be7000-usb kmod-qcom-ppe \
+	DEVICE_PACKAGES := -uboot-envtools be7000-usb kmod-qcom-ppe-offload \
 		kmod-qcom-wlan qcom-wlan-firmware-xiaomi-be7000
 	IMAGES := system.img userdata.img
 	IMAGE/system.img := append-rootfs | be7000-system
@@ -88,7 +88,7 @@ define Device/xiaomi_be7000-native
 	$(call Device/xiaomi_be7000)
 	DEVICE_VARIANT := Native Ethernet + Native WLAN
 	DEVICE_DTS := ipq9574-be7000-native
-	DEVICE_PACKAGES := -uboot-envtools be7000-usb kmod-qcom-ppe \
+	DEVICE_PACKAGES := -uboot-envtools be7000-usb kmod-qcom-ppe-offload \
 		kmod-ath12k ath12k-firmware-qcn9274
 endef
 TARGET_DEVICES += xiaomi_be7000-native
