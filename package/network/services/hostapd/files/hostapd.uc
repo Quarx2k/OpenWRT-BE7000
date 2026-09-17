@@ -239,6 +239,7 @@ function __iface_pending_next(pending, state, ret, data)
 		if (!bss.mld_ap) {
 			let err = phydev.wdev_add(bss.ifname, {
 				mode: "ap",
+				macaddr: bss.bssid,
 				radio: phydev.radio,
 			});
 			if (err) {
