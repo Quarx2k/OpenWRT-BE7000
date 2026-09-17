@@ -51,9 +51,14 @@ define KernelPackage/qcom-wlan
 	$(WLAN_BUILD_DIR)/qca-wifi/wifi_3_0.ko \
 	$(WLAN_BUILD_DIR)/qca-wifi/umac.ko \
 	$(WLAN_BUILD_DIR)/qca-wifi/qca_ol.ko
-  AUTOLOAD:=$(call AutoLoad,30,qcom_q6v5_wcss_sec qmi_helpers mem_manager qdf umac ipq_cnss2 qca_ol wifi_3_0)
+  AUTOLOAD:=$(call AutoLoad,30,qmi_helpers mem_manager qdf umac ipq_cnss2 qca_ol wifi_3_0)
   MODPARAMS.qcom_q6v5_wcss_sec:=bringup_debug=1
   MODPARAMS.ipq_cnss2:=bdf_pci2=0x02 enable_mlo_support=0 bringup_debug=1
+endef
+
+define KernelPackage/qcom-wlan/install
+	# CNSS obtains WCSS through remoteproc, without an ELF module dependency.
+	$(call ModuleAutoLoad,qcom-wlan,$(1),19-,,qcom_q6v5_wcss_sec)
 endef
 
 define KernelPackage/qcom-wlan/description
