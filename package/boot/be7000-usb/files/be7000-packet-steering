@@ -1,0 +1,48 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+set -e
+shopt -s nullglob
+
+mode=${1:-1}
+flows=$(uci -q get 'network.@globals[0].steering_flows' || true)
+opts=()
+if [[ ${flows:-0} -gt 0 ]]; then
+	opts=(-l "$flows")
+fi
+# Keep the standard policy for WLAN and other network devices.
+/usr/libexec/network/packet-steering.uc "${opts[@]}" "$mode"
+
+[[ -r /tmp/sysinfo/board_name && $(</tmp/sysinfo/board_name) == xiaomi,be7000 ]] || exit 0
+[[ $(</sys/devices/system/cpu/online) == 0-3 ]] || exit 0
+
+set_value() {
+	[[ -w $1 ]] || return 0
+	[[ $(<"$1") == "$2" ]] || printf '%s\n' "$2" >"$1"
+}
+
+# Native EDMA hashes RX traffic across rings 20-23. Each port's TX rings
+# start at 8 + 4 * (port - 1); the driver selects TX by the current CPU.
+rx_irqs=0
+while read -r irq name; do
+	ring=${name##*_}
+	mask=f
+	if [[ $mode != 0 ]]; then
+		printf -v mask '%x' "$((1 << (ring % 4)))"
+	fi
+	set_value "/proc/irq/$irq/smp_affinity" "$mask"
+	case "$name" in
+		edma_rxdesc_*) rx_irqs=$((rx_irqs + 1)) ;;
+	esac
+done < <(awk '$NF ~ /^edma_(rxdesc|txcmpl)_[0-9]+$/ {
+	sub(/:$/, "", $1); print $1, $NF
+}' /proc/interrupts)
+
+[[ $rx_irqs == 4 ]] || exit 0
+for dev in /sys/class/net/*; do
+	[[ $(readlink "$dev/device/driver" 2>/dev/null) == */qcom_ppe ]] || continue
+	# RSS and IRQ affinity already distribute RX processing. Do not send
+	# it back to CPU0 through the generic policy's single RPS mask.
+	for queue in "$dev"/queues/rx-*; do
+		set_value "$queue/rps_cpus" 0
+	done
+done
