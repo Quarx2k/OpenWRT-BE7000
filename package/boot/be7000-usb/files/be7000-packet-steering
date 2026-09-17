@@ -9,7 +9,7 @@ opts=()
 if [[ ${flows:-0} -gt 0 ]]; then
 	opts=(-l "$flows")
 fi
-# Keep the standard policy for WLAN and other network devices.
+# Start with the standard policy, including the native ath12k profile.
 /usr/libexec/network/packet-steering.uc "${opts[@]}" "$mode"
 
 [[ -r /tmp/sysinfo/board_name && $(</tmp/sysinfo/board_name) == xiaomi,be7000 ]] || exit 0
@@ -37,12 +37,46 @@ done < <(awk '$NF ~ /^edma_(rxdesc|txcmpl)_[0-9]+$/ {
 	sub(/:$/, "", $1); print $1, $NF
 }' /proc/interrupts)
 
-[[ $rx_irqs == 4 ]] || exit 0
 for dev in /sys/class/net/*; do
-	[[ $(readlink "$dev/device/driver" 2>/dev/null) == */qcom_ppe ]] || continue
+	[[ $rx_irqs == 4 && $(readlink "$dev/device/driver" 2>/dev/null) == */qcom_ppe ]] || continue
 	# RSS and IRQ affinity already distribute RX processing. Do not send
 	# it back to CPU0 through the generic policy's single RPS mask.
 	for queue in "$dev"/queues/rx-*; do
 		set_value "$queue/rps_cpus" 0
+	done
+done
+
+[[ -d /sys/module/wifi_3_0 ]] || exit 0
+# QCN9224 has separate TX (DP0-3) and RX (DP4-7) contexts. Retain the
+# working 5.4 policy: RX on CPUs 0-3, TX completion on CPU3.
+# IPQ9574 exposes each AHB RX/TX ring as a separate named interrupt.
+while read -r irq name; do
+	case "$name" in
+		pci2_wlan_grp_dp_[0-3]) cpu=3 ;;
+		pci2_wlan_grp_dp_[4-7]) cpu=$((${name##*_} - 4)) ;;
+		*-ring[1-4]) cpu=$((${name##*ring} - 1)) ;;
+	esac
+	mask=f
+	if [[ $mode != 0 ]]; then
+		printf -v mask '%x' "$((1 << cpu))"
+	fi
+	set_value "/proc/irq/$irq/smp_affinity" "$mask"
+done < <(awk '$NF ~ /^pci2_wlan_grp_dp_[0-7]$/ ||
+	$NF ~ /^(reo2host-destination|wbm2host-tx-completions)-ring[1-4]$/ {
+	sub(/:$/, "", $1); print $1, $NF
+}' /proc/interrupts)
+
+# VAPs can lack a device parent. Resolve their wiphy's bus driver instead
+# of relying on wifi/phy/AP numbering, which changes across reloads.
+for dev in /sys/class/net/*; do
+	case "$(readlink "$dev/phy80211/device/driver" 2>/dev/null)" in
+		*/cnss2|*/cnss_pci) ;;
+		*) continue ;;
+	esac
+	# Both radios already hash RX over four hardware queues. Preserve that
+	# CPU locality instead of steering the packet a second time in software.
+	for queue in "$dev"/queues/rx-*; do
+		set_value "$queue/rps_cpus" 0
+		set_value "$queue/rps_flow_cnt" 0
 	done
 done
