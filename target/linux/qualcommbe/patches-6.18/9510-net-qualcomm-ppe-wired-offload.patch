@@ -436,10 +436,10 @@ index 0000000..9c6889e
 +}
 diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 new file mode 100644
-index 0000000..1805ebf
+index 0000000..83ba14c
 --- /dev/null
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
-@@ -0,0 +1,927 @@
+@@ -0,0 +1,948 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 +/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
 +/* Native IPQ9574 flowtable offload, adapted from the HPPE flowtable driver.
@@ -476,6 +476,7 @@ index 0000000..1805ebf
 +};
 +
 +struct ppe_rule {
++	enum ppe_reject_reason reject_reason;
 +	struct ppe_tuple tuple;
 +	struct ethhdr eth;
 +	__be32 new_src, new_dst;
@@ -932,6 +933,7 @@ index 0000000..1805ebf
 +		if (tcp.key->flags || tcp.mask->flags != htons(0x05))
 +			return -EOPNOTSUPP;
 +	}
++	r->reject_reason = PPE_REJECT_INGRESS_PORT;
 +	port = ppe_o_ifindex(o, meta.key->ingress_ifindex);
 +	if (port < 0)
 +		return port;
@@ -941,6 +943,7 @@ index 0000000..1805ebf
 +	r->tuple.sport = r->new_sport = ports.key->src;
 +	r->tuple.dport = r->new_dport = ports.key->dst;
 +	r->tuple.proto = basic.key->ip_proto;
++	r->reject_reason = PPE_REJECT_PPPOE;
 +	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PPPOE)) {
 +		struct flow_match_pppoe ppp;
 +
@@ -953,6 +956,7 @@ index 0000000..1805ebf
 +			return -EOPNOTSUPP;
 +	}
 +	flow_action_for_each(i, a, &rule->action) {
++		r->reject_reason = PPE_REJECT_ACTION;
 +		switch (a->id) {
 +		case FLOW_ACTION_MANGLE:
 +			ret = ppe_mangle(r, a);
@@ -960,6 +964,7 @@ index 0000000..1805ebf
 +				return ret;
 +			break;
 +		case FLOW_ACTION_REDIRECT:
++			r->reject_reason = PPE_REJECT_EGRESS_PORT;
 +			if (r->out_port)
 +				return -EOPNOTSUPP;
 +			port = ppe_o_port_index(o, a->dev);
@@ -981,9 +986,11 @@ index 0000000..1805ebf
 +			return -EOPNOTSUPP;
 +		}
 +	}
++	r->reject_reason = PPE_REJECT_EGRESS_PORT;
 +	if (!r->out_port || r->in_port == r->out_port ||
 +	    !is_valid_ether_addr(r->eth.h_source) || !is_valid_ether_addr(r->eth.h_dest))
 +		return -EOPNOTSUPP;
++	r->reject_reason = PPE_REJECT_BRIDGE;
 +	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
 +		struct ppe_offload_port *p = &o->ports[i];
 +
@@ -1023,6 +1030,7 @@ index 0000000..1805ebf
 +	ret = ppe_parse_rule(o, flow_cls_offload_flow_rule(cls), &r);
 +	if (ret)
 +		goto reject;
++	r.reject_reason = PPE_REJECT_NAT;
 +	snat = r.new_src != r.tuple.src || r.new_sport != r.tuple.sport;
 +	dnat = r.new_dst != r.tuple.dst || r.new_dport != r.tuple.dport;
 +	if (snat && dnat) {
@@ -1032,6 +1040,7 @@ index 0000000..1805ebf
 +	/* Hardware hashes the tuple, not the ingress interface or flowtable.
 +	 * Never replace a different owner's entry with an alias of its key.
 +	 */
++	r.reject_reason = PPE_REJECT_DUPLICATE;
 +	list_for_each_entry(other, &o->flow_list, list) {
 +		if (!memcmp(&other->tuple, &r.tuple, sizeof(r.tuple))) {
 +			ret = -EEXIST;
@@ -1047,9 +1056,11 @@ index 0000000..1805ebf
 +	f->in_port = r.in_port;
 +	f->out_port = r.out_port;
 +	f->in_ppp = !!r.in_sid;
++	r.reject_reason = PPE_REJECT_INGRESS_IF;
 +	ret = ppe_ingress_get(o, &r);
 +	if (ret)
 +		goto free;
++	r.reject_reason = PPE_REJECT_EGRESS_IF;
 +	ret = ppe_egress_get(o, &r, f, snat, dnat);
 +	if (ret)
 +		goto ingress;
@@ -1071,6 +1082,7 @@ index 0000000..1805ebf
 +				   (r.out_sid ? PPPOE_SES_HLEN : 0));
 +	ppe_o_field(host, 0, 1, 1);
 +	ppe_o_field(host, 32, 32, ntohl(r.tuple.src));
++	r.reject_reason = PPE_REJECT_TABLE;
 +	ret = ppe_o_flow_add(o, words, host, &f->index, &f->host);
 +	if (ret) {
 +		/* A failed hash insertion is ordinary exhaustion. A timeout may
@@ -1109,6 +1121,8 @@ index 0000000..1805ebf
 +	kfree(f);
 +reject:
 +	o->rejected++;
++	o->reject_reason[r.reject_reason]++;
++	o->last_reject_errno = ret;
 +	return ret;
 +}
 +
@@ -1248,6 +1262,10 @@ index 0000000..1805ebf
 +
 +static int ppe_offload_show(struct seq_file *s, void *unused)
 +{
++	static const char * const reasons[PPE_REJECT_MAX] = {
++		"match", "ingress_port", "pppoe", "action", "egress_port",
++		"bridge", "nat", "duplicate", "ingress_if", "egress_if", "table",
++	};
 +	struct ppe_offload *o = s->private;
 +	struct ppe_flow *f;
 +	u64 bytes, total_bytes, total_packets;
@@ -1271,14 +1289,17 @@ index 0000000..1805ebf
 +		   o->rejected, o->hw_errors, o->fdb_entries);
 +	seq_printf(s, "hardware_packets %llu\nhardware_bytes %llu\n",
 +		   total_packets, total_bytes);
++	seq_printf(s, "last_reject_errno %d\n", o->last_reject_errno);
++	for (i = 0; i < PPE_REJECT_MAX; i++)
++		seq_printf(s, "reject_%s %u\n", reasons[i], o->reject_reason[i]);
 +	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
 +		struct ppe_offload_port *p = &o->ports[i];
 +
 +		if (!p->dev)
 +			continue;
-+		seq_printf(s, "%s port=%d vsi=%u stp=%u pppoe=%u refs=%u/%u\n",
++		seq_printf(s, "%s port=%d vsi=%u stp=%u pppoe=%u refs=%u/%u unsupported=%u bridge_offloaded=%u\n",
 +			   p->dev->name, i, p->vsi, p->stp_state, p->ppp_sid,
-+			   p->if_refs, p->ppp_refs);
++			   p->if_refs, p->ppp_refs, p->unsupported, p->bridge_offloaded);
 +	}
 +	mutex_unlock(&o->lock);
 +	return 0;
@@ -1369,10 +1390,10 @@ index 0000000..1805ebf
 +}
 diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
 new file mode 100644
-index 0000000..d6f366f
+index 0000000..ebd7849
 --- /dev/null
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,190 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later OR MIT */
 +/* IPQ9574 APPE offload. Register layout follows the APPE SSDK interface. */
 +#ifndef __PPE_OFFLOAD_H__
@@ -1460,6 +1481,21 @@ index 0000000..d6f366f
 +	u8 ppp_mac[ETH_ALEN];
 +};
 +
++enum ppe_reject_reason {
++	PPE_REJECT_MATCH,
++	PPE_REJECT_INGRESS_PORT,
++	PPE_REJECT_PPPOE,
++	PPE_REJECT_ACTION,
++	PPE_REJECT_EGRESS_PORT,
++	PPE_REJECT_BRIDGE,
++	PPE_REJECT_NAT,
++	PPE_REJECT_DUPLICATE,
++	PPE_REJECT_INGRESS_IF,
++	PPE_REJECT_EGRESS_IF,
++	PPE_REJECT_TABLE,
++	PPE_REJECT_MAX,
++};
++
 +struct ppe_offload {
 +	struct ppe_device *ppe;
 +	struct regmap *regmap;
@@ -1485,6 +1521,8 @@ index 0000000..d6f366f
 +	u32 installed;
 +	u32 removed;
 +	u32 rejected;
++	u32 reject_reason[PPE_REJECT_MAX];
++	int last_reject_errno;
 +	u32 hw_errors;
 +	u32 live;
 +	u32 fdb_entries;
@@ -1548,10 +1586,10 @@ index 0000000..d6f366f
 +#endif
 diff --git a/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
 new file mode 100644
-index 0000000..272f6cc
+index 0000000..b26270b
 --- /dev/null
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_switchdev.c
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,433 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 +/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
 +/* IPQ9574 known-unicast bridge offload. Linux owns learning and aging.
@@ -1818,6 +1856,11 @@ index 0000000..272f6cc
 +		ret = ppe_bridge_update(o, o->ports[port].vsi);
 +		break;
 +	case SWITCHDEV_ATTR_ID_BRIDGE_VLAN_FILTERING:
++		/* nbp_vlan_init() also reports filtering=false when an ordinary
++		 * bridge port joins. That must not disable the shared PPE bridge.
++		 */
++		if (!attr->u.vlan_filtering)
++			break;
 +		/* VLAN-aware bridges stay entirely in software. This notifier
 +		 * runs before the bridge flag changes, so retire classification
 +		 * synchronously rather than testing br_vlan_enabled() here.
@@ -1832,8 +1875,9 @@ index 0000000..272f6cc
 +		}
 +		break;
 +	case SWITCHDEV_ATTR_ID_PORT_PRE_BRIDGE_FLAGS:
-+		if (port >= 0 && attr->u.brport_flags.mask & ~(BR_LEARNING | BR_FLOOD |
-+						BR_MCAST_FLOOD | BR_BCAST_FLOOD)) {
++		if (port >= 0 &&
++		    (attr->u.brport_flags.val & attr->u.brport_flags.mask &
++		     ~(BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD))) {
 +			o->ports[port].unsupported = true;
 +			ppe_o_purge_port(o, port);
 +			ret = ppe_bridge_update(o, o->ports[port].vsi);
@@ -1845,8 +1889,8 @@ index 0000000..272f6cc
 +		/* Unsupported forwarding policies fall back without rejecting
 +		 * the Linux configuration. Rejoin the bridge to re-enable HW.
 +		 */
-+		if (attr->u.brport_flags.mask & ~(BR_LEARNING | BR_FLOOD |
-+						BR_MCAST_FLOOD | BR_BCAST_FLOOD))
++		if (attr->u.brport_flags.val & attr->u.brport_flags.mask &
++		    ~(BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD))
 +			o->ports[port].unsupported = true;
 +		ppe_o_purge_port(o, port);
 +		ret = ppe_bridge_update(o, o->ports[port].vsi);
