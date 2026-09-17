@@ -1,26 +1,8 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /* BE7000 firmware memory and SMP2P wiring, native OpenWrt secure PIL binding. */
-&gcc {
-	/* PAS owns these WCSS gates; exclude them from unused-clock cleanup. */
-	protected-clocks = <GCC_Q6_AHB_CLK>,
-		<GCC_Q6_AHB_S_CLK>,
-		<GCC_WCSS_ECAHB_CLK>,
-		<GCC_WCSS_ACMT_CLK>,
-		<GCC_SYS_NOC_WCSS_AHB_CLK>,
-		<GCC_ANOC_WCSS_AXI_M_CLK>,
-		<GCC_Q6SS_ATBM_CLK>,
-		<GCC_WCSS_DBG_IFC_ATB_CLK>,
-		<GCC_Q6_TSCTR_1TO2_CLK>,
-		<GCC_WCSS_DBG_IFC_NTS_CLK>,
-		<GCC_Q6SS_PCLKDBG_CLK>,
-		<GCC_Q6SS_TRIG_CLK>,
-		<GCC_WCSS_DBG_IFC_APB_CLK>,
-		<GCC_WCSS_DBG_IFC_DAPBUS_CLK>,
-		<GCC_Q6_AXIM_CLK>,
-		<GCC_WCSS_Q6_TBU_CLK>,
-		<GCC_MEM_NOC_Q6_AXI_CLK>,
-		<GCC_Q6SS_BOOT_CLK>;
-};
+/* Linux 6.18 no longer registers the PAS-owned Q6/WCSS gates in GCC,
+ * so they cannot be gated by unused-clock cleanup and need no protection list.
+ */
 
 &soc {
 	q6v5_wcss: remoteproc@cd00000 {

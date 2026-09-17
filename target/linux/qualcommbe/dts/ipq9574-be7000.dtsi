@@ -105,18 +105,18 @@
 &xo_board_clk { clock-mult = <1>; clock-div = <2>; };
 &sleep_clk { clock-frequency = <32000>; };
 
-&CPU0 { cpu-supply = <&ipq9574_s1>; };
-&CPU1 {
+&cpu0 { cpu-supply = <&ipq9574_s1>; };
+&cpu1 {
 	cpu-supply = <&ipq9574_s1>;
 	enable-method = "spin-table";
 	cpu-release-addr = <0 0x4fb3eff8>;
 };
-&CPU2 {
+&cpu2 {
 	cpu-supply = <&ipq9574_s1>;
 	enable-method = "spin-table";
 	cpu-release-addr = <0 0x4fb3eff8>;
 };
-&CPU3 {
+&cpu3 {
 	cpu-supply = <&ipq9574_s1>;
 	enable-method = "spin-table";
 	cpu-release-addr = <0 0x4fb3eff8>;
