@@ -1048,7 +1048,11 @@
 	};
 };
 
-&wifi0 { status = "okay"; };
+&wifi0 {
+	memory-region = <&m3_dump>;
+	memory-region-names = "m3-dump";
+	status = "okay";
+};
 &wifi6 {
 	qrtr_node_id = <0x32>;
 	base-addr = <0x54100000>;
