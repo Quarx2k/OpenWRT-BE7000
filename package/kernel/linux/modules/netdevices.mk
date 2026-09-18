@@ -2183,7 +2183,8 @@ endef
 
 define KernelPackage/qcom-ppe-offload/description
   Enable known-unicast bridge and IPv4 TCP/UDP flowtable acceleration
-  in the native PPE driver, including NAT. PPP uses software forwarding.
+  in the native PPE driver, including NAT over a single dedicated PPPoE WAN.
+  Unsupported PPP topologies retain software forwarding.
 endef
 
 $(eval $(call KernelPackage,qcom-ppe-offload))

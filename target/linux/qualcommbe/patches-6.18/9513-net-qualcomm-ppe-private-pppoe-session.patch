@@ -1,0 +1,355 @@
+Subject: net: qualcomm: PPE PPPoE offload with private session tracking
+
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+ /* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
+ /* Native IPQ9574 flowtable offload, adapted from the HPPE flowtable driver.
+- * Only untagged, wired IPv4 TCP/UDP routes and NAT are accepted.
++ * Untagged wired IPv4, including NAT over one dedicated PPPoE WAN.
+  */
+ 
+ #include <linux/debugfs.h>
+@@ -40,6 +40,7 @@
+ 	__be32 new_src, new_dst;
+ 	__be16 new_sport, new_dport;
+ 	u16 in_sid, out_sid;
++	u32 out_mtu;
+ 	u8 in_port, out_port;
+ };
+ 
+@@ -144,6 +145,11 @@
+ 	ret = ppe_o_write(o, PPE_O_IN_IF(index), words, 3);
+ 	if (ret)
+ 		return ret;
++	/* PPPoE packets obtain their L3 interface from the session lookup.
++	 * Never assign that interface to ordinary IP arriving on this port.
++	 */
++	if (ppp)
++		return 0;
+ 	ret = regmap_bulk_read(o->regmap, PPE_O_L3_PORT(port), l3port, 4);
+ 	if (ret)
+ 		return ret;
+@@ -167,10 +173,14 @@
+ static int ppe_ppp_get(struct ppe_offload *o, int port, u16 sid, const u8 *mac)
+ {
+ 	struct ppe_offload_port *p = &o->ports[port];
++	const struct ppe_pppoe_session *session = &o->ppp;
+ 	u32 words[2] = {};
++	u64 peer;
+ 	int ret;
+ 
+-	if (p->if_refs || !sid)
++	if (p->if_refs || !sid || !session->valid ||
++	    session->port != port || session->sid != sid ||
++	    !ether_addr_equal(session->local, mac))
+ 		return -EOPNOTSUPP;
+ 	if (p->ppp_refs) {
+ 		if (p->ppp_sid != sid || !ether_addr_equal(p->ppp_mac, mac))
+@@ -194,7 +204,15 @@
+ 			   BIT(16) | ((port + 8) << 8));
+ 	if (ret)
+ 		goto error;
+-	ret = regmap_write(o->regmap, PPE_O_PPPOE_EXT(port), BIT(1));
++	/* Match the access concentrator as well as SID and physical port.
++	 * APPE stores peer[0..3] in EXT1 and peer[4..5] in EXT[31:16].
++	 */
++	peer = ether_addr_to_u64(session->peer);
++	ret = regmap_write(o->regmap, PPE_O_PPPOE_EXT1(port), peer >> 16);
++	if (ret)
++		goto error;
++	ret = regmap_write(o->regmap, PPE_O_PPPOE_EXT(port),
++			   BIT(1) | BIT(2) | ((peer & 0xffff) << 16));
+ 	if (ret)
+ 		goto error;
+ 	p->ppp_sid = sid;
+@@ -266,7 +284,7 @@
+ 			 struct ppe_flow *f, bool snat, bool dnat)
+ {
+ 	u32 words[4] = {}, size[3] = {};
+-	u32 mtu = o->ports[r->out_port].dev->mtu + ETH_HLEN;
++	u32 mtu = r->out_mtu + ETH_HLEN + (r->out_sid ? PPPOE_SES_HLEN : 0);
+ 	int ret, index;
+ 
+ 	ppe_o_field(words, 0, 48, ether_addr_to_u64(r->eth.h_source));
+@@ -448,20 +466,127 @@
+ 	}
+ }
+ 
+-static bool ppe_ppp_active(void)
++/* RCU protects the kernel's standard PPP -> PPPoE -> Ethernet path walk.
++ * No opaque flow cookie is dereferenced and no PPP private data is used.
++ * Restrict the initial implementation to one untagged, unbridged WAN,
++ * one active PPP interface and one local IPv4 address. Ambiguity falls back.
++ */
++static void ppe_ppp_snapshot(struct ppe_offload *o,
++			     struct ppe_pppoe_session *session)
+ {
+-	struct net_device *dev;
+-	bool active = false;
++	struct net_device_path_stack stack;
++	struct net_device *dev, *ppp = NULL;
++	const struct net_device *lower;
++	struct in_device *in_dev;
++	struct in_ifaddr *ifa;
++	u8 daddr[ETH_ALEN] = {};
++	int port;
+ 
++	memset(session, 0, sizeof(*session));
+ 	rcu_read_lock();
+ 	for_each_netdev_rcu(&init_net, dev) {
+-		if (dev->type == ARPHRD_PPP && netif_running(dev)) {
+-			active = true;
+-			break;
+-		}
+-	}
++		if (dev->type != ARPHRD_PPP || !netif_running(dev))
++			continue;
++		session->active = true;
++		if (ppp)
++			goto out;
++		ppp = dev;
++	}
++	if (!ppp || dev_fill_forward_path(ppp, daddr, &stack) ||
++	    stack.num_paths != 2 || stack.path[0].type != DEV_PATH_PPPOE ||
++	    stack.path[1].type != DEV_PATH_ETHERNET ||
++	    !stack.path[0].encap.id ||
++	    stack.path[0].encap.proto != htons(ETH_P_PPP_SES) ||
++	    !is_valid_ether_addr(stack.path[0].encap.h_dest))
++		goto out;
++	lower = stack.path[1].dev;
++	port = ppe_o_port_index(o, lower);
++	if (port < 0 || !netif_running(lower) || !netif_carrier_ok(lower) ||
++	    o->ports[port].bridge || o->ports[port].unsupported ||
++	    netdev_has_any_upper_dev(o->ports[port].dev) ||
++	    !is_valid_ether_addr(lower->dev_addr))
++		goto out;
++	/* No concurrent ordinary IPv4 service on the dedicated PPPoE port. */
++	in_dev = __in_dev_get_rcu(lower);
++	if (in_dev && rcu_access_pointer(in_dev->ifa_list))
++		goto out;
++	in_dev = __in_dev_get_rcu(ppp);
++	if (!in_dev)
++		goto out;
++	ifa = rcu_dereference(in_dev->ifa_list);
++	if (!ifa || !ifa->ifa_local || rcu_access_pointer(ifa->ifa_next) ||
++	    ppp->mtu < 68 || ppp->mtu > lower->mtu - PPPOE_SES_HLEN)
++		goto out;
++	session->ifindex = ppp->ifindex;
++	session->mtu = ppp->mtu;
++	session->address = ifa->ifa_local;
++	session->sid = stack.path[0].encap.id;
++	session->port = port;
++	ether_addr_copy(session->local, lower->dev_addr);
++	ether_addr_copy(session->peer, stack.path[0].encap.h_dest);
++	session->valid = true;
++out:
+ 	rcu_read_unlock();
+-	return active;
++}
++
++static void ppe_ppp_refresh(struct ppe_offload *o)
++{
++	struct ppe_pppoe_session session = {};
++	struct ppe_flow *f, *tmp;
++
++	lockdep_assert_held(&o->lock);
++	ppe_ppp_snapshot(o, &session);
++	if (!memcmp(&session, &o->ppp, sizeof(session)))
++		return;
++	/* Flush under the same lock before publishing any replacement session. */
++	list_for_each_entry_safe(f, tmp, &o->flow_list, list)
++		ppe_flow_remove(o, f);
++	memcpy(&o->ppp, &session, sizeof(session));
++	o->ppp_changes++;
++}
++
++static void ppe_ppp_work(struct work_struct *work)
++{
++	struct ppe_offload *o = container_of(to_delayed_work(work),
++					  struct ppe_offload, ppp_work);
++
++	mutex_lock(&o->lock);
++	if (!o->stopping) {
++		/* Channel detach can precede pppd's NETDEV_DOWN notification. */
++		ppe_ppp_refresh(o);
++		schedule_delayed_work(&o->ppp_work, msecs_to_jiffies(250));
++	}
++	mutex_unlock(&o->lock);
++}
++
++static int ppe_ppp_rule(struct ppe_offload *o, struct ppe_rule *r)
++{
++	const struct ppe_pppoe_session *s = &o->ppp;
++
++	r->out_mtu = o->ports[r->out_port].dev->mtu;
++	if (!s->active)
++		return r->out_sid ? -EOPNOTSUPP : 0;
++	if (!s->valid)
++		return -EOPNOTSUPP;
++	if (r->out_port == s->port) {
++		/* Kernel action proves PPP encapsulation in this direction. */
++		if (r->out_sid != s->sid || r->new_src != s->address ||
++		    !ether_addr_equal(r->eth.h_source, s->local) ||
++		    !ether_addr_equal(r->eth.h_dest, s->peer))
++			return -EOPNOTSUPP;
++		r->out_mtu = s->mtu;
++	} else if (r->out_sid) {
++		return -EOPNOTSUPP;
++	}
++	if (r->in_port == s->port) {
++		/* The sole session on a dedicated WAN owns this local IPv4.
++		 * Restrict download offload to DNAT, including replies to SNAT.
++		 */
++		if (r->tuple.dst != s->address || r->new_dst == r->tuple.dst)
++			return -EOPNOTSUPP;
++		r->in_sid = s->sid;
++	}
++	return 0;
+ }
+ 
+ static int ppe_parse_rule(struct ppe_offload *o, struct flow_rule *rule,
+@@ -540,7 +665,10 @@
+ 			break;
+ 		case FLOW_ACTION_PPPOE_PUSH:
+ 			r->reject_reason = PPE_REJECT_PPPOE;
+-			return -EOPNOTSUPP;
++			if (r->out_sid || !a->pppoe.sid)
++				return -EOPNOTSUPP;
++			r->out_sid = a->pppoe.sid;
++			break;
+ 		default:
+ 			return -EOPNOTSUPP;
+ 		}
+@@ -560,7 +688,8 @@
+ 				 p->stp_state != BR_STATE_FORWARDING)))
+ 			return -EOPNOTSUPP;
+ 	}
+-	return 0;
++	r->reject_reason = PPE_REJECT_PPPOE;
++	return ppe_ppp_rule(o, r);
+ }
+ 
+ static int ppe_flow_replace(struct ppe_block *block, struct flow_cls_offload *cls)
+@@ -575,17 +704,6 @@
+ 
+ 	if (o->failed || o->stopping)
+ 		return -EIO;
+-	/* The standard flowtable exposes the physical ingress ifindex, but
+-	 * not the PPP session. Do not guess it from an opaque flow cookie.
+-	 * Until ingress encapsulation is available, any active PPP interface
+-	 * in the supported namespace keeps routed flows in software.
+-	 * Bridge switching is independent and remains available.
+-	 */
+-	if (ppe_ppp_active()) {
+-		r.reject_reason = PPE_REJECT_PPPOE;
+-		ret = -EOPNOTSUPP;
+-		goto reject;
+-	}
+ 	f = rhashtable_lookup_fast(&o->flows, &key, ppe_flow_ht_params);
+ 	if (f) {
+ 		ret = ppe_flow_age(o, f);
+@@ -648,8 +766,7 @@
+ 	ppe_o_field(words, 124, 16, ntohs(r.tuple.dport));
+ 	/* APPE has a per-flow L3 PMTU check (HPPE's entry ends before it). */
+ 	ppe_o_field(words, 148, 1, 1);
+-	ppe_o_field(words, 149, 14, o->ports[r.out_port].dev->mtu -
+-				   (r.out_sid ? PPPOE_SES_HLEN : 0));
++	ppe_o_field(words, 149, 14, r.out_mtu);
+ 	ppe_o_field(host, 0, 1, 1);
+ 	ppe_o_field(host, 32, 32, ntohl(r.tuple.src));
+ 	r.reject_reason = PPE_REJECT_TABLE;
+@@ -708,6 +825,8 @@
+ 	if (type != TC_SETUP_CLSFLOWER)
+ 		return -EOPNOTSUPP;
+ 	mutex_lock(&o->lock);
++	if (!o->stopping)
++		ppe_ppp_refresh(o);
+ 	if (cls->command == FLOW_CLS_REPLACE) {
+ 		ret = ppe_flow_replace(block, cls);
+ 		goto out;
+@@ -812,7 +931,9 @@
+ 	 */
+ 	switch (event) {
+ 	case NETDEV_UP:
++	case NETDEV_GOING_DOWN:
+ 	case NETDEV_DOWN:
++	case NETDEV_CHANGE:
+ 	case NETDEV_UNREGISTER:
+ 	case NETDEV_CHANGEADDR:
+ 	case NETDEV_CHANGEMTU:
+@@ -861,7 +982,11 @@
+ 	seq_printf(s, "hardware_packets %llu\nhardware_bytes %llu\n",
+ 		   total_packets, total_bytes);
+ 	seq_printf(s, "last_reject_errno %d\n", o->last_reject_errno);
+-	seq_printf(s, "ppp_software_fallback %u\n", ppe_ppp_active());
++	seq_printf(s, "ppp_software_fallback %u\npppoe_ready %u\npppoe_changes %u\n",
++		   o->ppp.active && !o->ppp.valid, o->ppp.valid, o->ppp_changes);
++	if (o->ppp.valid)
++		seq_printf(s, "pppoe_ifindex %d\npppoe_port %u\npppoe_sid %u\npppoe_mtu %u\n",
++			   o->ppp.ifindex, o->ppp.port, o->ppp.sid, o->ppp.mtu);
+ 	for (i = 0; i < PPE_REJECT_MAX; i++)
+ 		seq_printf(s, "reject_%s %u\n", reasons[i], o->reject_reason[i]);
+ 	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
+@@ -915,6 +1040,7 @@
+ 	o->ppe = ppe;
+ 	o->regmap = ppe->regmap;
+ 	mutex_init(&o->lock);
++	INIT_DELAYED_WORK(&o->ppp_work, ppe_ppp_work);
+ 	INIT_LIST_HEAD(&o->flow_list);
+ 	INIT_LIST_HEAD(&o->fdb_list);
+ 	INIT_LIST_HEAD(&o->blocks);
+@@ -932,7 +1058,8 @@
+ 	if (ret)
+ 		goto switchdev;
+ 	ppe->offload = o;
+-	dev_info(ppe->dev, "APPE wired bridge and IPv4 NAT offload ready; PPP uses software\n");
++	schedule_delayed_work(&o->ppp_work, 0);
++	dev_info(ppe->dev, "APPE wired bridge and IPv4 NAT offload ready; single-session PPPoE supported\n");
+ 	return 0;
+ switchdev:
+ 	ppe_o_switchdev_exit(o);
+@@ -948,6 +1075,10 @@
+ 
+ 	if (!o)
+ 		return;
++	mutex_lock(&o->lock);
++	o->stopping = true;
++	mutex_unlock(&o->lock);
++	cancel_delayed_work_sync(&o->ppp_work);
+ 	unregister_netdevice_notifier(&o->netdev_nb);
+ 	ppe_o_switchdev_exit(o);
+ 	mutex_lock(&o->lock);
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.h
+@@ -100,6 +100,19 @@
+ 	PPE_REJECT_MAX,
+ };
+ 
++/* Private to PPE: no netdevice, PPP or flowtable ABI extensions. */
++struct ppe_pppoe_session {
++	int ifindex;
++	u32 mtu;
++	__be32 address;
++	u16 sid;
++	u8 port;
++	bool active;
++	bool valid;
++	u8 local[ETH_ALEN];
++	u8 peer[ETH_ALEN];
++};
++
+ struct ppe_offload {
+ 	struct ppe_device *ppe;
+ 	struct regmap *regmap;
+@@ -118,6 +131,9 @@
+ 	struct notifier_block switchdev_nb;
+ 	struct notifier_block switchdev_blocking_nb;
+ 	struct workqueue_struct *wq;
++	struct delayed_work ppp_work;
++	struct ppe_pppoe_session ppp;
++	u32 ppp_changes;
+ 	u8 cmd_id;
+ 	u8 fdb_cmd_id;
+ 	bool failed;
