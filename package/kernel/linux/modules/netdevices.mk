@@ -2172,14 +2172,18 @@ $(eval $(call KernelPackage,qcom-ppe))
 
 define KernelPackage/qcom-ppe-offload
   SUBMENU:=$(NETWORK_DEVICES_MENU)
-  DEPENDS:=@TARGET_qualcommbe +kmod-qcom-ppe +kmod-nf-flow
-  TITLE:=Qualcomm IPQ9574 wired bridge and NAT/PPPoE offload
-  KCONFIG:=CONFIG_QCOM_PPE_OFFLOAD=y
+  DEPENDS:=@TARGET_qualcommbe +kmod-libphy +kmod-pcs-qcom-ipq9574 +kmod-nf-flow
+  TITLE:=Qualcomm IPQ9574 wired bridge and NAT offload
+  PROVIDES:=kmod-qcom-ppe
+  CONFLICTS:=kmod-qcom-ppe
+  KCONFIG:=CONFIG_QCOM_PPE
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/qualcomm/ppe/qcom-ppe.ko
+  AUTOLOAD:=$(call AutoProbe,qcom-ppe)
 endef
 
 define KernelPackage/qcom-ppe-offload/description
   Enable known-unicast bridge and IPv4 TCP/UDP flowtable acceleration
-  in the native PPE driver, including NAT and untagged PPPoE.
+  in the native PPE driver, including NAT. PPP uses software forwarding.
 endef
 
 $(eval $(call KernelPackage,qcom-ppe-offload))

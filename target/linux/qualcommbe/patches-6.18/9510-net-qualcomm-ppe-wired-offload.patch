@@ -1,38 +1,30 @@
 Subject: [PATCH] net: ethernet: qualcomm: add APPE wired bridge and flowtable offload
 
-Add optional IPQ9574 known-unicast switching and IPv4 TCP/UDP routing,
-NAT and untagged PPPoE offload to the native PPE driver. Use the APPE
-table layout and keep unsupported paths in software.
+Add IPQ9574 known-unicast switching and IPv4 TCP/UDP routing and NAT
+to the native PPE driver using the standard flowtable interface. Keep
+PPP routing in software: the interface does not expose its ingress session.
 
 Flow-table operations and resource handling are adapted from Julius
 Bairaktaris' HPPE driver (20862f96324f7080d1e1ff1b946b18dcb27ed21e),
 with APPE layouts checked against QSDK 12.1 SSDK.
 
---- a/drivers/net/ethernet/qualcomm/Kconfig
-+++ b/drivers/net/ethernet/qualcomm/Kconfig
-@@ -77,6 +77,15 @@
- 	  To compile this driver as a module, choose M here. The module
- 	  will be called qcom-ppe.
- 
-+config QCOM_PPE_OFFLOAD
-+	bool "IPQ9574 PPE wired bridge and flowtable offload"
-+	depends on QCOM_PPE && BRIDGE && NF_FLOW_TABLE
-+	select NET_SWITCHDEV
-+	help
-+	  Offload known unicast bridge traffic and IPv4 TCP/UDP routing,
-+	  NAT and untagged PPPoE on the physical IPQ9574 PPE ports.
-+	  Unsupported traffic continues through the software network stack.
-+
- source "drivers/net/ethernet/qualcomm/rmnet/Kconfig"
- 
- endif # NET_VENDOR_QUALCOMM
 --- a/drivers/net/ethernet/qualcomm/ppe/Makefile
 +++ b/drivers/net/ethernet/qualcomm/ppe/Makefile
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,17 @@
  
  obj-$(CONFIG_QCOM_PPE) += qcom-ppe.o
  qcom-ppe-objs := ppe.o ppe_config.o ppe_debugfs.o ppe_port.o ppe_api.o
-+qcom-ppe-$(CONFIG_QCOM_PPE_OFFLOAD) += ppe_flow.o ppe_offload.o ppe_switchdev.o
++ifeq ($(CONFIG_QCOM_PPE),m)
++ppe-flowtable := $(CONFIG_NF_FLOW_TABLE)
++else
++ppe-flowtable := $(filter y,$(CONFIG_NF_FLOW_TABLE))
++endif
++ifneq ($(ppe-flowtable),)
++ifeq ($(CONFIG_BRIDGE)$(CONFIG_NET_SWITCHDEV),yy)
++qcom-ppe-objs += ppe_flow.o ppe_offload.o ppe_switchdev.o
++ccflags-y += -DPPE_OFFLOAD_ENABLED
++endif
++endif
  
  #EDMA
  qcom-ppe-objs += edma.o edma_cfg_rx.o edma_cfg_tx.o edma_debugfs.o edma_port.o edma_rx.o edma_tx.o edma_ethtool.o
@@ -423,11 +415,11 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +}
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
-@@ -0,0 +1,948 @@
+@@ -0,0 +1,962 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 +/* Copyright (c) 2026 Julius Bairaktaris <julius@bairaktaris.de> */
 +/* Native IPQ9574 flowtable offload, adapted from the HPPE flowtable driver.
-+ * Only untagged, wired IPv4 TCP/UDP routes, NAT and PPPoE are accepted.
++ * Only untagged, wired IPv4 TCP/UDP routes and NAT are accepted.
 + */
 +
 +#include <linux/debugfs.h>
@@ -874,6 +866,22 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +	}
 +}
 +
++static bool ppe_ppp_active(void)
++{
++	struct net_device *dev;
++	bool active = false;
++
++	rcu_read_lock();
++	for_each_netdev_rcu(&init_net, dev) {
++		if (dev->type == ARPHRD_PPP && netif_running(dev)) {
++			active = true;
++			break;
++		}
++	}
++	rcu_read_unlock();
++	return active;
++}
++
 +static int ppe_parse_rule(struct ppe_offload *o, struct flow_rule *rule,
 +			  struct ppe_rule *r)
 +{
@@ -892,8 +900,7 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +
 +	if ((rule->match.dissector->used_keys & keys) != keys ||
 +	    rule->match.dissector->used_keys &
-+	    ~(keys | BIT_ULL(FLOW_DISSECTOR_KEY_TCP) |
-+		     BIT_ULL(FLOW_DISSECTOR_KEY_PPPOE)))
++	    ~(keys | BIT_ULL(FLOW_DISSECTOR_KEY_TCP)))
 +		return -EOPNOTSUPP;
 +	flow_rule_match_meta(rule, &meta);
 +	flow_rule_match_control(rule, &control);
@@ -927,18 +934,6 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +	r->tuple.sport = r->new_sport = ports.key->src;
 +	r->tuple.dport = r->new_dport = ports.key->dst;
 +	r->tuple.proto = basic.key->ip_proto;
-+	r->reject_reason = PPE_REJECT_PPPOE;
-+	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_PPPOE)) {
-+		struct flow_match_pppoe ppp;
-+
-+		flow_rule_match_pppoe(rule, &ppp);
-+		if (ppp.mask->session_id != htons(0xffff) ||
-+		    ppp.key->ppp_proto != htons(PPP_IP))
-+			return -EOPNOTSUPP;
-+		r->in_sid = ntohs(ppp.key->session_id);
-+		if (!r->in_sid)
-+			return -EOPNOTSUPP;
-+	}
 +	flow_action_for_each(i, a, &rule->action) {
 +		r->reject_reason = PPE_REJECT_ACTION;
 +		switch (a->id) {
@@ -962,10 +957,8 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +				return -EOPNOTSUPP;
 +			break;
 +		case FLOW_ACTION_PPPOE_PUSH:
-+			if (r->out_sid || !a->pppoe.sid)
-+				return -EOPNOTSUPP;
-+			r->out_sid = a->pppoe.sid;
-+			break;
++			r->reject_reason = PPE_REJECT_PPPOE;
++			return -EOPNOTSUPP;
 +		default:
 +			return -EOPNOTSUPP;
 +		}
@@ -1000,6 +993,17 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +
 +	if (o->failed || o->stopping)
 +		return -EIO;
++	/* The standard flowtable exposes the physical ingress ifindex, but
++	 * not the PPP session. Do not guess it from an opaque flow cookie.
++	 * Until ingress encapsulation is available, any active PPP interface
++	 * in the supported namespace keeps routed flows in software.
++	 * Bridge switching is independent and remains available.
++	 */
++	if (ppe_ppp_active()) {
++		r.reject_reason = PPE_REJECT_PPPOE;
++		ret = -EOPNOTSUPP;
++		goto reject;
++	}
 +	f = rhashtable_lookup_fast(&o->flows, &key, ppe_flow_ht_params);
 +	if (f) {
 +		ret = ppe_flow_age(o, f);
@@ -1225,6 +1229,7 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +	 * leave autonomous forwarding behind. Linux can reinstall live flows.
 +	 */
 +	switch (event) {
++	case NETDEV_UP:
 +	case NETDEV_DOWN:
 +	case NETDEV_UNREGISTER:
 +	case NETDEV_CHANGEADDR:
@@ -1274,6 +1279,7 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +	seq_printf(s, "hardware_packets %llu\nhardware_bytes %llu\n",
 +		   total_packets, total_bytes);
 +	seq_printf(s, "last_reject_errno %d\n", o->last_reject_errno);
++	seq_printf(s, "ppp_software_fallback %u\n", ppe_ppp_active());
 +	for (i = 0; i < PPE_REJECT_MAX; i++)
 +		seq_printf(s, "reject_%s %u\n", reasons[i], o->reject_reason[i]);
 +	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
@@ -1344,7 +1350,7 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +	if (ret)
 +		goto switchdev;
 +	ppe->offload = o;
-+	dev_info(ppe->dev, "APPE wired bridge and IPv4 NAT/PPPoE offload ready\n");
++	dev_info(ppe->dev, "APPE wired bridge and IPv4 NAT offload ready; PPP uses software\n");
 +	return 0;
 +switchdev:
 +	ppe_o_switchdev_exit(o);
@@ -1546,7 +1552,7 @@ with APPE layouts checked against QSDK 12.1 SSDK.
 +int ppe_o_bridge_event(struct ppe_offload *o, struct net_device *dev,
 +		       unsigned long event, void *ptr);
 +
-+#if IS_ENABLED(CONFIG_QCOM_PPE_OFFLOAD)
++#ifdef PPE_OFFLOAD_ENABLED
 +int ppe_offload_init(struct ppe_device *ppe);
 +void ppe_offload_exit(struct ppe_device *ppe);
 +void ppe_offload_debugfs(struct ppe_device *ppe);

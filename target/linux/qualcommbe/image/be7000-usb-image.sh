@@ -40,6 +40,11 @@ case "$mode" in
 			wlan='native ath12k for PCIe 5 GHz (experimental)'
 			wlan_files=$'Upstream QCN9274-family firmware is included for QCN9224.\nBE7000 ath12k board/calibration data still needs integration.\nIntegrated IPQ9574 2.4 GHz WLAN is not supported by this tree.\nNo QSDK WLAN modules, stock WLAN firmware or INI are included.'
 			;;
+		xiaomi_be7000-wired)
+			directory+=-Wired
+			wlan='disabled (wired kernel compatibility bring-up)'
+			wlan_files='No WLAN drivers or device calibration are included.'
+			;;
 		*) echo "Unsupported BE7000 device: $9" >&2; exit 2 ;;
 		esac
 		sender=$(dirname "${BASH_SOURCE[0]}")/be7000

@@ -20,11 +20,35 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 IFS= read -r -d '' compatible </sys/firmware/devicetree/base/compatible
 [[ $compatible == xiaomi,be7000 ]]
-mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs -o mode=0755,size=512k,nosuid,noexec tmpfs /dev
+# rdinit runs before procd's coldplug. Create only the early userspace nodes;
+# USB block nodes are discovered from sysfs below, after loading boot modules.
+while read -r name major minor mode; do
+	mknod -m "$mode" "/dev/$name" c "$major" "$minor"
+done <<'EOF'
+console 5 1 600
+kmsg 1 11 600
+null 1 3 666
+zero 1 5 666
+full 1 7 666
+random 1 8 666
+urandom 1 9 666
+tty 5 0 666
+ptmx 5 2 666
+loop-control 10 237 600
+EOF
+for block in /sys/class/block/loop*; do
+	[[ -f $block/dev ]] || continue
+	IFS=: read -r major minor <"$block/dev"
+	mknod -m 600 "/dev/${block##*/}" b "$major" "$minor"
+done
+ln -s /proc/self/fd /dev/fd
+ln -s /tmp/shm /dev/shm
 mkdir -p /dev/pts /tmp /run /mnt/usb /mnt/owrt-system /mnt/owrt-data /mnt/owrt-root
 mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777 tmpfs /tmp
-mkdir -p /tmp/run /tmp/lock /tmp/log /tmp/state /tmp/.uci /tmp/sysinfo
+mkdir -p /tmp/run /tmp/lock /tmp/log /tmp/state /tmp/.uci /tmp/sysinfo /tmp/shm
+chmod 1777 /tmp/shm
 chmod 0700 /tmp/.uci
 exec </dev/console >/dev/kmsg 2>&1
 echo 'xiaomi,be7000' >/tmp/sysinfo/board_name
@@ -41,10 +65,7 @@ for arg in "${cmdline[@]}"; do
 done
 [[ $usb_dir =~ ^[A-Za-z0-9._-]+$ && $usb_dir != . && $usb_dir != .. ]]
 
-# RPM handoff is complete; initialize the dataplane with all four CPUs online.
-for cpu in 1 2 3; do
-	[[ ! -e /sys/devices/system/cpu/cpu$cpu/online ]] || echo 1 >"/sys/devices/system/cpu/cpu$cpu/online"
-done
+# The DT boots all four CPUs; the official profile does not enable hotplug.
 cat /sys/devices/system/cpu/online
 
 # Load only boot support here. Normal autoload runs from the final root,
@@ -54,6 +75,10 @@ for attempt in {1..30}; do
 	for block in /sys/class/block/sd*; do
 		[[ -e $block ]] || continue
 		dev=/dev/${block##*/}
+		if [[ ! -b $dev ]]; then
+			IFS=: read -r major minor <"$block/dev"
+			mknod -m 600 "$dev" b "$major" "$minor"
+		fi
 		if [[ -n $usb_uuid ]]; then
 			[[ $(blkid -s UUID -o value "$dev" 2>/dev/null || true) == "$usb_uuid" ]] || continue
 		fi

@@ -2,24 +2,6 @@ Subject: [PATCH] rpmsg: retain the BE7000 RPM channel across kexec
 
 Use the validated Xiaomi RGLH record and defer queued work through the native workqueue.
 
---- a/drivers/rpmsg/Kconfig
-+++ b/drivers/rpmsg/Kconfig
-@@ -54,6 +54,15 @@
- 	  which serves as a channel for communication with the RPM in GLINK
- 	  enabled systems.
- 
-+config BE7000_KEXEC_HANDOFF
-+	bool "Xiaomi BE7000 retained RPM channel after kexec"
-+	depends on ARM64 && !CPU_BIG_ENDIAN && OF
-+	depends on RPMSG_QCOM_GLINK_RPM=y
-+	help
-+	  Receive the pointer-free RGLH v1 record left by our kexec sender.
-+	  Enable with be7000_handoff=1 and initially boot with maxcpus=1.
-+	  Requires the Xiaomi rsvd2 no-map reservation in the target DTB.
-+
- config RPMSG_QCOM_GLINK_SMEM
- 	tristate "Qualcomm SMEM Glink driver"
- 	select RPMSG_QCOM_GLINK
 --- /dev/null
 +++ b/drivers/rpmsg/qcom_glink_be7000.h
 @@ -0,0 +1,66 @@
@@ -261,7 +243,7 @@ Use the validated Xiaomi RGLH record and defer queued work through the native wo
  	return -EINVAL;
  }
  
-+#ifdef CONFIG_BE7000_KEXEC_HANDOFF
++#if defined(CONFIG_ARM64) && !defined(CONFIG_CPU_BIG_ENDIAN)
 +static bool be7000_handoff_enabled;
 +
 +static int __init be7000_handoff_setup(char *str)

@@ -1,0 +1,30 @@
+# Match the official qualcommbe/ipq95xx kernel package selection.
+# ALL_KMODS builds optional modules as packages; only y packages enter the image.
+CONFIG_TARGET_qualcommbe=y
+CONFIG_TARGET_qualcommbe_ipq95xx=y
+CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_xiaomi_be7000-wired=y
+CONFIG_ALL_KMODS=y
+CONFIG_DEVEL=y
+CONFIG_BUILDBOT=y
+CONFIG_KERNEL_BUILD_DOMAIN="buildhost"
+CONFIG_KERNEL_BUILD_USER="builder"
+CONFIG_REPRODUCIBLE_DEBUG_INFO=y
+# QSDK packages carry private kernel options and are excluded from this profile.
+# CONFIG_PACKAGE_kmod-qcom-wlan is not set
+# CONFIG_PACKAGE_kmod-cfg80211-native is not set
+# CONFIG_PACKAGE_qcom-wlan-firmware-xiaomi-be7000 is not set
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-app-package-manager=y
+CONFIG_PACKAGE_kmod-qcom-ppe-offload=y
+CONFIG_TARGET_EXT4_BLOCKSIZE=4096
+CONFIG_TARGET_EXT4_BLOCKSIZE_4K=y
+CONFIG_TARGET_EXT4_JOURNAL=y
+CONFIG_TARGET_EXT4_RESERVED_PCT=0
+CONFIG_TARGET_INITRAMFS_COMPRESSION_GZIP=y
+# CONFIG_TARGET_INITRAMFS_COMPRESSION_NONE is not set
+CONFIG_TARGET_ROOTFS_EXT4FS=y
+CONFIG_TARGET_ROOTFS_PARTSIZE=512
+# CONFIG_TARGET_ROOTFS_SQUASHFS is not set
+# CONFIG_TARGET_IMAGES_GZIP is not set
+# CONFIG_SIGN_EACH_PACKAGE is not set
+# CONFIG_SIGN_FIRMWARE is not set

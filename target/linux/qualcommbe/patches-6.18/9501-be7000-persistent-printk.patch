@@ -18,7 +18,7 @@ index a6c6fd1..49a66d9 100644
  extern const char linux_banner[];
  extern const char linux_proc_banner[];
  
-+#ifdef CONFIG_BE7000_PRINTK_PERSIST
++#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_QCOM)
 +void __init be7000_printk_init(void);
 +#else
 +static inline void be7000_printk_init(void) { }
@@ -35,7 +35,7 @@ index 0000000..8c2cfcc
 @@ -0,0 +1,149 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/* Included by printk.c: KXLG v1, retained across the Xiaomi kexec path. */
-+#ifdef CONFIG_BE7000_PRINTK_PERSIST
++#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_QCOM)
 +#include <linux/io.h>
 +#include <linux/libfdt.h>
 +#include <linux/memblock.h>
@@ -211,21 +211,3 @@ index 3a91b73..bef3d1c 100644
  	r.info->facility = facility;
  	r.info->level = level & 7;
  	r.info->flags = flags & 0x1f;
-diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index 5a6415c..c229049 100644
---- a/lib/Kconfig.debug
-+++ b/lib/Kconfig.debug
-@@ -1,6 +1,13 @@
- # SPDX-License-Identifier: GPL-2.0-only
- menu "Kernel hacking"
- 
-+config BE7000_PRINTK_PERSIST
-+	bool "BE7000 persistent KXLG printk ring"
-+	depends on ARM64 && OF && PRINTK
-+	help
-+	  Record early printk in Xiaomi reserved RAM at 0x4fa00000.
-+	  Enable with be7000_printk=1 and reserve the exact no-map range.
-+
- menu "printk and dmesg options"
- 
- config PRINTK_TIME
