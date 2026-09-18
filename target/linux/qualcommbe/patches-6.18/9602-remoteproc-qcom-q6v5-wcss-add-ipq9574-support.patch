@@ -4,6 +4,7 @@ Adapted from kravasuper/openwrt 790d036a178c0f695c2f60d490d194091b35e595.
 Authors: Alexandru Gagniuc and Igor Kravchenko.
 Keep optional M3 loading local to IPQ9574 and acquire its Q6 reset.
 Allow the intended 200 polling intervals on IPQ9574 shutdown.
+Preserve QSDK's AXI-before-AHB clock enable order.
 
 diff --git a/drivers/remoteproc/qcom_q6v5_wcss.c b/drivers/remoteproc/qcom_q6v5_wcss.c
 index 23ec878..0128be9 100644
@@ -401,9 +402,9 @@ index 23ec878..0128be9 100644
 +static int ipq9574_init_clocks(struct q6v5_wcss *wcss)
 +{
 +	static const char *const pre_boot_clks[] = {
-+		"anoc_wcss_axi_m", "q6_ahb", "q6_ahb_s", "q6_axim", "q6ss_boot",
-+		"mem_noc_q6_axi", "sys_noc_wcss_ahb", "wcss_acmt", "wcss_ecahb",
-+		"wcss_q6_tbu" };
++		"anoc_wcss_axi_m", "q6_axim", "q6_ahb", "q6_ahb_s", "q6ss_boot",
++		"wcss_ecahb", "wcss_acmt", "mem_noc_q6_axi", "wcss_q6_tbu",
++		"sys_noc_wcss_ahb" };
 +	static const char *const clks[] = {
 +		"q6_axim2", "wcss_ahb_s", "wcss_axi_m" };
 +	int i, ret;
