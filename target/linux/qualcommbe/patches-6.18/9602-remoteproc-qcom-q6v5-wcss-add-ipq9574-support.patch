@@ -3,9 +3,10 @@ Subject: remoteproc: qcom_q6v5_wcss: add IPQ9574 support
 Adapted from kravasuper/openwrt 790d036a178c0f695c2f60d490d194091b35e595.
 Authors: Alexandru Gagniuc and Igor Kravchenko.
 Keep optional M3 loading local to IPQ9574 and acquire its Q6 reset.
+Allow the intended 200 polling intervals on IPQ9574 shutdown.
 
 diff --git a/drivers/remoteproc/qcom_q6v5_wcss.c b/drivers/remoteproc/qcom_q6v5_wcss.c
-index 23ec878..781ed3c 100644
+index 23ec878..0128be9 100644
 --- a/drivers/remoteproc/qcom_q6v5_wcss.c
 +++ b/drivers/remoteproc/qcom_q6v5_wcss.c
 @@ -31,6 +31,9 @@
@@ -262,7 +263,7 @@ index 23ec878..781ed3c 100644
 +
 +	ret = readl_poll_timeout(wcss->rmb_base + SSCAON_STATUS,
 +				 val, (val & 0xffff) == 0x400, 1000,
-+				 HALT_CHECK_MAX_LOOPS);
++				 HALT_CHECK_MAX_LOOPS * 1000);
 +	if (ret) {
 +		dev_err(wcss->dev,
 +			"can't get SSCAON_STATUS rc:%d)\n", ret);

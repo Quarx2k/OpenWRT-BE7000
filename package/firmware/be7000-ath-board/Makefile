@@ -41,8 +41,8 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	test "$$(stat -c %s $(PKG_BUILD_DIR)/IPQ9574/caldata.bin)" = 131072
-	test "$$(stat -c %s $(PKG_BUILD_DIR)/qcn9224/caldata_3.bin)" = 184320
+	stat -c %s $(PKG_BUILD_DIR)/IPQ9574/caldata.bin | grep -qx 131072
+	stat -c %s $(PKG_BUILD_DIR)/qcn9224/caldata_3.bin | grep -qx 184320
 	bash ./board-2.sh ath11k 'bus=ahb,qmi-chip-id=0,qmi-board-id=255,variant=Xiaomi-BE7000' \
 		$(PKG_BUILD_DIR)/IPQ9574/bdwlan.bin $(PKG_BUILD_DIR)/IPQ9574/regdb.bin \
 		$(PKG_BUILD_DIR)/IPQ9574/board-2.bin
