@@ -1,0 +1,285 @@
+Subject: wifi: ath12k: add BE7000 native radio support for backports 7.2
+
+Adapted from kravasuper/openwrt 790d036a178c0f695c2f60d490d194091b35e595.
+The IPQ9574 support originates with Alexandru Gagniuc and Igor Kravchenko.
+PCI firmware memory follows named DT reservations, bounded independently.
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index ba32cd5..01731e8 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -2212,6 +2212,7 @@ destroy:
+ void ath12k_core_hw_group_set_mlo_capable(struct ath12k_hw_group *ag)
+ {
+ 	struct ath12k_base *ab;
++	u32 num_radios;
+ 	int i;
+ 
+ 	if (ath12k_ftm_mode)
+@@ -2221,6 +2222,12 @@ void ath12k_core_hw_group_set_mlo_capable(struct ath12k_hw_group *ag)
+ 
+ 	if (ag->num_devices == 1) {
+ 		ab = ag->ab[0];
++		/* A board capped to one radio has no partner link for MLO. */
++		if (!of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios) &&
++		    num_radios == 1) {
++			ag->mlo_capable = false;
++			return;
++		}
+ 		/* QCN9274 firmware uses firmware IE for MLO advertisement */
+ 		if (ab->fw.fw_features_valid) {
+ 			ag->mlo_capable =
+diff --git a/drivers/net/wireless/ath/ath12k/htc.c b/drivers/net/wireless/ath/ath12k/htc.c
+index 92138ca..8dcd274 100644
+--- a/drivers/net/wireless/ath/ath12k/htc.c
++++ b/drivers/net/wireless/ath/ath12k/htc.c
+@@ -747,6 +747,19 @@ int ath12k_htc_start(struct ath12k_htc *htc)
+ 
+ 	return 0;
+ }
++static void ath12k_htc_apply_dt_num_radios(struct ath12k_base *ab)
++{
++	u32 num_radios;
++
++	if (!ab->dev->of_node)
++		return;
++
++	if (of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios))
++		return;
++
++	if (num_radios && num_radios < ab->htc.wmi_ep_count)
++		ab->htc.wmi_ep_count = num_radios;
++}
+ 
+ int ath12k_htc_init(struct ath12k_base *ab)
+ {
+@@ -777,6 +790,8 @@ int ath12k_htc_init(struct ath12k_base *ab)
+ 		break;
+ 	}
+ 
++	ath12k_htc_apply_dt_num_radios(ab);
++
+ 	/* setup our pseudo HTC control endpoint connection */
+ 	conn_req.ep_ops.ep_tx_complete = ath12k_htc_control_tx_complete;
+ 	conn_req.ep_ops.ep_rx_complete = ath12k_htc_control_rx_complete;
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 8ca0013..ebae25e 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -1552,6 +1552,12 @@ static int ath12k_pci_probe(struct pci_dev *pdev,
+ 	pci_set_drvdata(pdev, ab);
+ 	spin_lock_init(&ab_pci->window_lock);
+ 
++	/* If firmware memory is reserved in DT, avoid the large dynamic
++	 * coherent DMA allocation used by the default QMI memory path.
++	 */
++	if (of_property_match_string(ab->dev->of_node, "memory-region-names", "qmi") >= 0)
++		set_bit(ATH12K_FLAG_FIXED_MEM_REGION, &ab->dev_flags);
++
+ 	ret = ath12k_pci_claim(ab_pci, pdev);
+ 	if (ret) {
+ 		ath12k_err(ab, "failed to claim device: %d\n", ret);
+diff --git a/drivers/net/wireless/ath/ath12k/qmi.c b/drivers/net/wireless/ath/ath12k/qmi.c
+index 3cf39ae..3bfdcca 100644
+--- a/drivers/net/wireless/ath/ath12k/qmi.c
++++ b/drivers/net/wireless/ath/ath12k/qmi.c
+@@ -1090,6 +1090,22 @@ static const struct qmi_elem_info qmi_wlanfw_rf_chip_info_s_v01_ei[] = {
+ 	},
+ };
+ 
++static void ath12k_qmi_apply_dt_board_id(struct ath12k_base *ab)
++{
++	u32 board_id;
++
++	if (!ab->dev->of_node)
++		return;
++
++	if (of_property_read_u32(ab->dev->of_node, "qcom,board_id", &board_id) &&
++	    of_property_read_u32(ab->dev->of_node, "qcom,board-id", &board_id))
++		return;
++
++	ath12k_info(ab, "overriding QMI board_id 0x%x with DT board_id 0x%x\n",
++		    ab->qmi.target.board_id, board_id);
++	ab->qmi.target.board_id = board_id;
++}
++
+ static const struct qmi_elem_info qmi_wlanfw_rf_board_info_s_v01_ei[] = {
+ 	{
+ 		.data_type	= QMI_UNSIGNED_4_BYTE,
+@@ -2278,6 +2294,25 @@ out:
+ 	return ret;
+ }
+ 
++static void ath12k_qmi_apply_dt_num_radios(struct ath12k_base *ab)
++{
++	u32 num_radios;
++
++	if (!ab->dev->of_node)
++		return;
++
++	if (of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios))
++		return;
++
++	if (num_radios &&
++	    (!ab->qmi.num_radios || ab->qmi.num_radios == U8_MAX ||
++	     num_radios < ab->qmi.num_radios)) {
++		ath12k_info(ab, "overriding QMI num_radios %u with DT num_radios %u\n",
++			    ab->qmi.num_radios, num_radios);
++		ab->qmi.num_radios = num_radios;
++	}
++}
++
+ static void ath12k_qmi_phy_cap_send(struct ath12k_base *ab)
+ {
+ 	struct qmi_wlanfw_phy_cap_req_msg_v01 req = {};
+@@ -2325,11 +2360,14 @@ static void ath12k_qmi_phy_cap_send(struct ath12k_base *ab)
+ 		   resp.num_phy_valid, resp.num_phy,
+ 		   resp.board_id_valid, resp.board_id);
+ 
++	ath12k_qmi_apply_dt_num_radios(ab);
++
+ 	return;
+ 
+ out:
+ 	/* If PHY capability not advertised then rely on default num link */
+ 	ab->qmi.num_radios = ab->hw_params->def_num_link;
++	ath12k_qmi_apply_dt_num_radios(ab);
+ 
+ 	ath12k_dbg(ab, ATH12K_DBG_QMI,
+ 		   "no valid response from PHY capability, choose default num_phy %d\n",
+@@ -2725,6 +2763,36 @@ err:
+ 	return ret;
+ }
+ 
++static int ath12k_qmi_assign_pci_fixed_mem_chunk(struct ath12k_base *ab,
++						 int idx, int i, const char *name)
++{
++	struct reserved_mem *rmem;
++	int region;
++
++	region = of_property_match_string(ab->dev->of_node, "memory-region-names", name);
++	if (region < 0)
++		return region;
++
++	rmem = ath12k_core_get_reserved_mem(ab, region);
++	if (!rmem)
++		return -ENODEV;
++
++	if (rmem->size < ab->qmi.target_mem[i].size) {
++		ath12k_err(ab, "reserved %s memory too small for %u bytes\n",
++			   name, ab->qmi.target_mem[i].size);
++		return -EINVAL;
++	}
++
++	ab->qmi.target_mem[idx].paddr = rmem->base;
++	ab->qmi.target_mem[idx].v.ioaddr =
++		ioremap(ab->qmi.target_mem[idx].paddr,
++			ab->qmi.target_mem[i].size);
++	if (!ab->qmi.target_mem[idx].v.ioaddr)
++		return -EIO;
++
++	return 0;
++}
++
+ static int ath12k_qmi_assign_target_mem_chunk(struct ath12k_base *ab)
+ {
+ 	struct reserved_mem *rmem;
+@@ -2732,6 +2800,38 @@ static int ath12k_qmi_assign_target_mem_chunk(struct ath12k_base *ab)
+ 	int i, idx, ret;
+ 
+ 	for (i = 0, idx = 0; i < ab->qmi.mem_seg_count; i++) {
++		if (ab->hif.bus == ATH12K_BUS_PCI) {
++			switch (ab->qmi.target_mem[i].type) {
++			case HOST_DDR_REGION_TYPE:
++				ret = ath12k_qmi_assign_pci_fixed_mem_chunk(ab, idx, i, "qmi");
++				break;
++			case M3_DUMP_REGION_TYPE:
++				ret = ath12k_qmi_assign_pci_fixed_mem_chunk(ab, idx, i,
++									    "m3-dump");
++				break;
++			case CALDB_MEM_REGION_TYPE:
++				ret = ath12k_qmi_assign_pci_fixed_mem_chunk(ab, idx, i,
++									    "caldb");
++				break;
++			case PAGEABLE_MEM_REGION_TYPE:
++				ret = ath12k_qmi_assign_pci_fixed_mem_chunk(ab, idx, i,
++									    "pageable");
++				break;
++			default:
++				ath12k_dbg(ab, ATH12K_DBG_QMI,
++					   "qmi ignore unsupported mem req type %u size %u index %d\n",
++					   ab->qmi.target_mem[i].type,
++					   ab->qmi.target_mem[i].size, i);
++				continue;
++			}
++			if (ret)
++				goto out;
++			ab->qmi.target_mem[idx].size = ab->qmi.target_mem[i].size;
++			ab->qmi.target_mem[idx].type = ab->qmi.target_mem[i].type;
++			idx++;
++			continue;
++		}
++
+ 		switch (ab->qmi.target_mem[i].type) {
+ 		case HOST_DDR_REGION_TYPE:
+ 			rmem = ath12k_core_get_reserved_mem(ab, 0);
+@@ -2900,6 +3000,9 @@ int ath12k_qmi_request_target_cap(struct ath12k_base *ab)
+ 	else
+ 		ab->qmi.target.board_id = board_id;
+ 
++	ath12k_qmi_apply_dt_board_id(ab);
++	ath12k_qmi_apply_dt_num_radios(ab);
++
+ 	if (resp.soc_info_valid)
+ 		ab->qmi.target.soc_id = resp.soc_info.soc_id;
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index dba4a9b..5f9d0c4 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -4917,7 +4917,7 @@ static int ath12k_wmi_dma_ring_caps(struct ath12k_base *ab,
+ 	struct ath12k_wmi_dma_ring_caps_params *dma_caps;
+ 	struct ath12k_dbring_cap *dir_buff_caps;
+ 	int ret;
+-	u32 i;
++	u32 i, valid_caps = 0;
+ 
+ 	dma_caps_parse->n_dma_ring_caps = 0;
+ 	dma_caps = (struct ath12k_wmi_dma_ring_caps_params *)ptr;
+@@ -4944,25 +4944,24 @@ static int ath12k_wmi_dma_ring_caps(struct ath12k_base *ab,
+ 	dir_buff_caps = ab->db_caps;
+ 	for (i = 0; i < dma_caps_parse->n_dma_ring_caps; i++) {
+ 		if (le32_to_cpu(dma_caps[i].module_id) >= WMI_DIRECT_BUF_MAX) {
+-			ath12k_warn(ab, "Invalid module id %d\n",
++			ath12k_warn(ab, "ignoring unsupported direct buffer module id %d\n",
+ 				    le32_to_cpu(dma_caps[i].module_id));
+-			ret = -EINVAL;
+-			goto free_dir_buff;
++			continue;
+ 		}
+ 
+-		dir_buff_caps[i].id = le32_to_cpu(dma_caps[i].module_id);
+-		dir_buff_caps[i].pdev_id =
++		dir_buff_caps[valid_caps].id = le32_to_cpu(dma_caps[i].module_id);
++		dir_buff_caps[valid_caps].pdev_id =
+ 			DP_HW2SW_MACID(le32_to_cpu(dma_caps[i].pdev_id));
+-		dir_buff_caps[i].min_elem = le32_to_cpu(dma_caps[i].min_elem);
+-		dir_buff_caps[i].min_buf_sz = le32_to_cpu(dma_caps[i].min_buf_sz);
+-		dir_buff_caps[i].min_buf_align = le32_to_cpu(dma_caps[i].min_buf_align);
++		dir_buff_caps[valid_caps].min_elem = le32_to_cpu(dma_caps[i].min_elem);
++		dir_buff_caps[valid_caps].min_buf_sz = le32_to_cpu(dma_caps[i].min_buf_sz);
++		dir_buff_caps[valid_caps].min_buf_align =
++			le32_to_cpu(dma_caps[i].min_buf_align);
++		valid_caps++;
+ 	}
+ 
+-	return 0;
++	ab->num_db_cap = valid_caps;
+ 
+-free_dir_buff:
+-	ath12k_wmi_free_dbring_caps(ab);
+-	return ret;
++	return 0;
+ }
+ 
+ static void

@@ -1,18 +1,44 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
-/* Native PPE/QCA8084 Ethernet and ath12k PCIe WLAN with BE7000 USB boot. */
+/* Native PPE/QCA8084 Ethernet and ath11k/ath12k WLAN with BE7000 USB boot. */
 /dts-v1/;
 
 #include "ipq9574-be7000.dtsi"
 
-/* Use the native PCIe/PHY bindings for the QCN9224 5 GHz radio.
- * IPQ9574 integrated WLAN and BE7000 ath12k board/calibration data still
- * need bring-up; no CNSS/WCSS platform nodes are enabled in this profile.
- */
+/* Xiaomi 1.1.38 single-PHY QCN9224 memory layout. */
+/ {
+	reserved-memory {
+		qcn9224_pcie2_m3: m3@55d00000 { reg = <0 0x55d00000 0 0x100000>; no-map; };
+		qcn9224_pcie2_etr: etr@55e00000 { reg = <0 0x55e00000 0 0x100000>; no-map; };
+		qcn9224_pcie2_caldb: caldb@55f00000 { reg = <0 0x55f00000 0 0x800000>; no-map; };
+		qcn9224_pcie2_pageable: pageable@56700000 { reg = <0 0x56700000 0 0xc00000>; no-map; };
+	};
+};
+
+&qcn9224_pcie2 { reg = <0 0x54100000 0 0x1c00000>; };
+
 &pcie2 {
 	pinctrl-0 = <&be7000_pcie2_pins>;
 	pinctrl-names = "default";
 	perst-gpios = <&tlmm 29 GPIO_ACTIVE_LOW>;
 	status = "okay";
+
+	pcie@0,0 {
+		#address-cells = <3>;
+		#size-cells = <2>;
+		reg = <0 0 0 0 0>;
+
+		wifi5: wifi@0,0 {
+			compatible = "pci17cb,1109";
+			reg = <0 0 0 0 0>;
+			qcom,calibration-variant = "Xiaomi-BE7000";
+			/* Same board selection as stock cnss2.bdf_pci2=0x02. */
+			qcom,board_id = <2>;
+			qcom,num-radios = <1>;
+			memory-region = <&qcn9224_pcie2>, <&qcn9224_pcie2_m3>,
+					<&qcn9224_pcie2_caldb>, <&qcn9224_pcie2_pageable>;
+			memory-region-names = "qmi", "m3-dump", "caldb", "pageable";
+		};
+	};
 };
 
 &pcie2_phy {
@@ -20,6 +46,19 @@
 };
 
 &tlmm {
+	/* Route all four chains to the single 5 GHz PHY. */
+	rf-low-hog {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "wifi-single-phy-low";
+	};
+	rf-high-hog {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "wifi-single-phy-high";
+	};
 	be7000_pcie2_pins: pcie2-state {
 		clkreq-pins {
 			pins = "gpio28";
@@ -38,3 +77,4 @@
 };
 
 #include "ipq9574-be7000-ethernet.dtsi"
+#include "ipq9574-be7000-ath11k.dtsi"

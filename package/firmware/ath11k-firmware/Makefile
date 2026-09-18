@@ -58,6 +58,11 @@ $(Package/ath11k-firmware-default)
   TITLE:=IPQ6018 ath11k firmware
 endef
 
+define Package/ath11k-firmware-ipq9574
+$(Package/ath11k-firmware-default)
+  TITLE:=IPQ9574 ath11k firmware
+endef
+
 define Build/Clean
 	$(call Build/Clean/Default,)
 
@@ -95,3 +100,12 @@ endef
 
 $(eval $(call BuildPackage,ath11k-firmware-ipq5018-qcn6122))
 $(eval $(call BuildPackage,ath11k-firmware-ipq6018))
+
+define Package/ath11k-firmware-ipq9574/install
+	$(INSTALL_DIR) $(1)/lib/firmware/ath11k/IPQ9574/hw1.0
+	$(INSTALL_DATA) \
+		$(BUILD_DIR)/$(ATH11K_LEGACY_FW_SUBDIR)/ath11k-firmware/IPQ9574/hw1.0/2.11.0.1/WLAN.HK.2.11.0.1-01491-QCAHKSWPL_SILICONZ-1/*.* \
+		$(1)/lib/firmware/ath11k/IPQ9574/hw1.0/
+endef
+
+$(eval $(call BuildPackage,ath11k-firmware-ipq9574))

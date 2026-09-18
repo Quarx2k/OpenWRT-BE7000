@@ -89,7 +89,7 @@ define Device/xiaomi_be7000-native
 	DEVICE_VARIANT := Native Ethernet + Native WLAN
 	DEVICE_DTS := ipq9574-be7000-native
 	DEVICE_PACKAGES := -uboot-envtools -kmod-qcom-ppe be7000-usb kmod-qcom-ppe-offload \
-		kmod-ath12k ath12k-firmware-qcn9274
+		kmod-ath11k-ahb ath11k-firmware-ipq9574 kmod-ath12k ath12k-firmware-qcn9274 be7000-ath-board
 endef
 TARGET_DEVICES += xiaomi_be7000-native
 
