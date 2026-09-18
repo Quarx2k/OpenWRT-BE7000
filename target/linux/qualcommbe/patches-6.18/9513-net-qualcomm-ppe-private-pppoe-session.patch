@@ -73,7 +73,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	int ret, index;
  
  	ppe_o_field(words, 0, 48, ether_addr_to_u64(r->eth.h_source));
-@@ -448,20 +466,127 @@
+@@ -448,20 +466,129 @@
  	}
  }
  
@@ -89,7 +89,8 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
 -	struct net_device *dev;
 -	bool active = false;
 +	struct net_device_path_stack stack;
-+	struct net_device *dev, *ppp = NULL;
++	struct net_device *dev, *ppp = NULL, *upper;
++	struct list_head *iter;
 +	const struct net_device *lower;
 +	struct in_device *in_dev;
 +	struct in_ifaddr *ifa;
@@ -122,8 +123,9 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
 +	port = ppe_o_port_index(o, lower);
 +	if (port < 0 || !netif_running(lower) || !netif_carrier_ok(lower) ||
 +	    o->ports[port].bridge || o->ports[port].unsupported ||
-+	    netdev_has_any_upper_dev(o->ports[port].dev) ||
 +	    !is_valid_ether_addr(lower->dev_addr))
++		goto out;
++	netdev_for_each_upper_dev_rcu(o->ports[port].dev, upper, iter)
 +		goto out;
 +	/* No concurrent ordinary IPv4 service on the dedicated PPPoE port. */
 +	in_dev = __in_dev_get_rcu(lower);
@@ -210,7 +212,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  }
  
  static int ppe_parse_rule(struct ppe_offload *o, struct flow_rule *rule,
-@@ -540,7 +665,10 @@
+@@ -540,7 +667,10 @@
  			break;
  		case FLOW_ACTION_PPPOE_PUSH:
  			r->reject_reason = PPE_REJECT_PPPOE;
@@ -222,7 +224,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  		default:
  			return -EOPNOTSUPP;
  		}
-@@ -560,7 +688,8 @@
+@@ -560,7 +690,8 @@
  				 p->stp_state != BR_STATE_FORWARDING)))
  			return -EOPNOTSUPP;
  	}
@@ -232,7 +234,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  }
  
  static int ppe_flow_replace(struct ppe_block *block, struct flow_cls_offload *cls)
-@@ -575,17 +704,6 @@
+@@ -575,17 +706,6 @@
  
  	if (o->failed || o->stopping)
  		return -EIO;
@@ -250,7 +252,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	f = rhashtable_lookup_fast(&o->flows, &key, ppe_flow_ht_params);
  	if (f) {
  		ret = ppe_flow_age(o, f);
-@@ -648,8 +766,7 @@
+@@ -648,8 +768,7 @@
  	ppe_o_field(words, 124, 16, ntohs(r.tuple.dport));
  	/* APPE has a per-flow L3 PMTU check (HPPE's entry ends before it). */
  	ppe_o_field(words, 148, 1, 1);
@@ -260,7 +262,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	ppe_o_field(host, 0, 1, 1);
  	ppe_o_field(host, 32, 32, ntohl(r.tuple.src));
  	r.reject_reason = PPE_REJECT_TABLE;
-@@ -708,6 +825,8 @@
+@@ -708,6 +827,8 @@
  	if (type != TC_SETUP_CLSFLOWER)
  		return -EOPNOTSUPP;
  	mutex_lock(&o->lock);
@@ -269,7 +271,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	if (cls->command == FLOW_CLS_REPLACE) {
  		ret = ppe_flow_replace(block, cls);
  		goto out;
-@@ -812,7 +931,9 @@
+@@ -812,7 +933,9 @@
  	 */
  	switch (event) {
  	case NETDEV_UP:
@@ -279,7 +281,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	case NETDEV_UNREGISTER:
  	case NETDEV_CHANGEADDR:
  	case NETDEV_CHANGEMTU:
-@@ -861,7 +982,11 @@
+@@ -861,7 +984,11 @@
  	seq_printf(s, "hardware_packets %llu\nhardware_bytes %llu\n",
  		   total_packets, total_bytes);
  	seq_printf(s, "last_reject_errno %d\n", o->last_reject_errno);
@@ -292,7 +294,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	for (i = 0; i < PPE_REJECT_MAX; i++)
  		seq_printf(s, "reject_%s %u\n", reasons[i], o->reject_reason[i]);
  	for (i = 1; i < PPE_OFFLOAD_PORTS; i++) {
-@@ -915,6 +1040,7 @@
+@@ -915,6 +1042,7 @@
  	o->ppe = ppe;
  	o->regmap = ppe->regmap;
  	mutex_init(&o->lock);
@@ -300,7 +302,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	INIT_LIST_HEAD(&o->flow_list);
  	INIT_LIST_HEAD(&o->fdb_list);
  	INIT_LIST_HEAD(&o->blocks);
-@@ -932,7 +1058,8 @@
+@@ -932,7 +1060,8 @@
  	if (ret)
  		goto switchdev;
  	ppe->offload = o;
@@ -310,7 +312,7 @@ Subject: net: qualcomm: PPE PPPoE offload with private session tracking
  	return 0;
  switchdev:
  	ppe_o_switchdev_exit(o);
-@@ -948,6 +1075,10 @@
+@@ -948,6 +1077,10 @@
  
  	if (!o)
  		return;
