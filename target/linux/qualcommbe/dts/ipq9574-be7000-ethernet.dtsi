@@ -279,11 +279,11 @@
 			clocks = <&nsscc NSS_CC_PORT1_MAC_CLK>,
 				 <&nsscc NSS_CC_PORT1_RX_CLK>,
 				 <&nsscc NSS_CC_PORT1_TX_CLK>;
-			clock-names = "port_mac", "port_rx", "port_tx";
+			clock-names = "mac", "rx", "tx";
 			resets = <&nsscc PORT1_MAC_ARES>,
 				 <&nsscc PORT1_RX_ARES>,
 				 <&nsscc PORT1_TX_ARES>;
-			reset-names = "port_mac", "port_rx", "port_tx";
+			reset-names = "mac", "rx", "tx";
 		};
 
 		be7000_port2: port@2 {
@@ -296,11 +296,11 @@
 			clocks = <&nsscc NSS_CC_PORT2_MAC_CLK>,
 				 <&nsscc NSS_CC_PORT2_RX_CLK>,
 				 <&nsscc NSS_CC_PORT2_TX_CLK>;
-			clock-names = "port_mac", "port_rx", "port_tx";
+			clock-names = "mac", "rx", "tx";
 			resets = <&nsscc PORT2_MAC_ARES>,
 				 <&nsscc PORT2_RX_ARES>,
 				 <&nsscc PORT2_TX_ARES>;
-			reset-names = "port_mac", "port_rx", "port_tx";
+			reset-names = "mac", "rx", "tx";
 		};
 
 		be7000_port3: port@3 {
@@ -313,11 +313,11 @@
 			clocks = <&nsscc NSS_CC_PORT3_MAC_CLK>,
 				 <&nsscc NSS_CC_PORT3_RX_CLK>,
 				 <&nsscc NSS_CC_PORT3_TX_CLK>;
-			clock-names = "port_mac", "port_rx", "port_tx";
+			clock-names = "mac", "rx", "tx";
 			resets = <&nsscc PORT3_MAC_ARES>,
 				 <&nsscc PORT3_RX_ARES>,
 				 <&nsscc PORT3_TX_ARES>;
-			reset-names = "port_mac", "port_rx", "port_tx";
+			reset-names = "mac", "rx", "tx";
 		};
 
 		be7000_port4: port@4 {
@@ -330,11 +330,11 @@
 			clocks = <&nsscc NSS_CC_PORT4_MAC_CLK>,
 				 <&nsscc NSS_CC_PORT4_RX_CLK>,
 				 <&nsscc NSS_CC_PORT4_TX_CLK>;
-			clock-names = "port_mac", "port_rx", "port_tx";
+			clock-names = "mac", "rx", "tx";
 			resets = <&nsscc PORT4_MAC_ARES>,
 				 <&nsscc PORT4_RX_ARES>,
 				 <&nsscc PORT4_TX_ARES>;
-			reset-names = "port_mac", "port_rx", "port_tx";
+			reset-names = "mac", "rx", "tx";
 		};
 	};
 };

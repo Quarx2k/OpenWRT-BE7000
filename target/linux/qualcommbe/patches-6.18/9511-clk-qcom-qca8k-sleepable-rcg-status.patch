@@ -1,0 +1,158 @@
+Subject: [PATCH] clk: qcom: qca8k: read RCG state in prepare context
+
+The QCA8084 NSS clock registers are accessed over MDIO, whose transactions
+can sleep. The regular RCG is_enabled callback is called with the clock
+enable spinlock held, including during unused-clock cleanup.
+
+Provide RCG operation variants using is_prepared and select them only for
+the MDIO-backed NSS controller. Keep the existing rate and parent handling.
+
+--- a/drivers/clk/qcom/clk-rcg.h
++++ b/drivers/clk/qcom/clk-rcg.h
+@@ -189,9 +189,11 @@
+ 	container_of(to_clk_rcg2(_hw), struct clk_rcg2_gfx3d, rcg)
+ 
+ extern const struct clk_ops clk_rcg2_ops;
++extern const struct clk_ops clk_rcg2_prepare_ops;
+ extern const struct clk_ops clk_rcg2_gp_ops;
+ extern const struct clk_ops clk_rcg2_floor_ops;
+ extern const struct clk_ops clk_rcg2_fm_ops;
++extern const struct clk_ops clk_rcg2_fm_prepare_ops;
+ extern const struct clk_ops clk_rcg2_mux_closest_ops;
+ extern const struct clk_ops clk_edp_pixel_ops;
+ extern const struct clk_ops clk_byte_ops;
+--- a/drivers/clk/qcom/clk-rcg2.c
++++ b/drivers/clk/qcom/clk-rcg2.c
+@@ -811,6 +811,20 @@
+ };
+ EXPORT_SYMBOL_GPL(clk_rcg2_ops);
+ 
++/* MDIO-backed RCGs must query hardware under the sleepable prepare lock. */
++const struct clk_ops clk_rcg2_prepare_ops = {
++	.is_prepared = clk_rcg2_is_enabled,
++	.get_parent = clk_rcg2_get_parent,
++	.set_parent = clk_rcg2_set_parent,
++	.recalc_rate = clk_rcg2_recalc_rate,
++	.determine_rate = clk_rcg2_determine_rate,
++	.set_rate = clk_rcg2_set_rate,
++	.set_rate_and_parent = clk_rcg2_set_rate_and_parent,
++	.get_duty_cycle = clk_rcg2_get_duty_cycle,
++	.set_duty_cycle = clk_rcg2_set_duty_cycle,
++};
++EXPORT_SYMBOL_GPL(clk_rcg2_prepare_ops);
++
+ const struct clk_ops clk_rcg2_gp_ops = {
+ 	.is_enabled = clk_rcg2_is_enabled,
+ 	.get_parent = clk_rcg2_get_parent,
+@@ -849,6 +863,19 @@
+ };
+ EXPORT_SYMBOL_GPL(clk_rcg2_fm_ops);
+ 
++const struct clk_ops clk_rcg2_fm_prepare_ops = {
++	.is_prepared = clk_rcg2_is_enabled,
++	.get_parent = clk_rcg2_get_parent,
++	.set_parent = clk_rcg2_set_parent,
++	.recalc_rate = clk_rcg2_recalc_rate,
++	.determine_rate = clk_rcg2_fm_determine_rate,
++	.set_rate = clk_rcg2_fm_set_rate,
++	.set_rate_and_parent = clk_rcg2_fm_set_rate_and_parent,
++	.get_duty_cycle = clk_rcg2_get_duty_cycle,
++	.set_duty_cycle = clk_rcg2_set_duty_cycle,
++};
++EXPORT_SYMBOL_GPL(clk_rcg2_fm_prepare_ops);
++
+ const struct clk_ops clk_rcg2_mux_closest_ops = {
+ 	.determine_rate = __clk_mux_determine_rate_closest,
+ 	.get_parent = clk_rcg2_get_parent,
+--- a/drivers/clk/qcom/nsscc-qca8k.c
++++ b/drivers/clk/qcom/nsscc-qca8k.c
+@@ -313,7 +313,7 @@
+ 		.name = "nss_cc_mac1_tx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_rx_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_rx_tx312p5m_data),
+-		.ops = &clk_rcg2_fm_ops,
++		.ops = &clk_rcg2_fm_prepare_ops,
+ 	},
+ };
+ 
+@@ -450,7 +450,7 @@
+ 		.name = "nss_cc_mac1_rx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_tx312p5m_prx_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_tx312p5m_prx_data),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_prepare_ops,
+ 	},
+ };
+ 
+@@ -569,7 +569,7 @@
+ 		.name = "nss_cc_mac2_tx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_rx_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_rx_tx312p5m_data),
+-		.ops = &clk_rcg2_fm_ops,
++		.ops = &clk_rcg2_fm_prepare_ops,
+ 	},
+ };
+ 
+@@ -688,7 +688,7 @@
+ 		.name = "nss_cc_mac2_rx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_tx312p5m_prx_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_tx312p5m_prx_data),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_prepare_ops,
+ 	},
+ };
+ 
+@@ -807,7 +807,7 @@
+ 		.name = "nss_cc_mac3_tx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_rx_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_rx_tx312p5m_data),
+-		.ops = &clk_rcg2_fm_ops,
++		.ops = &clk_rcg2_fm_prepare_ops,
+ 	},
+ };
+ 
+@@ -926,7 +926,7 @@
+ 		.name = "nss_cc_mac3_rx_clk_src",
+ 		.parent_data = nss_cc_uniphy1_tx312p5m_prx_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_tx312p5m_prx_data),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_prepare_ops,
+ 	},
+ };
+ 
+@@ -1087,7 +1087,7 @@
+ 		.name = "nss_cc_mac4_tx_clk_src",
+ 		.parent_data = nss_cc_uniphy0_rx_uniphy1_rx_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy0_rx_uniphy1_rx_tx312p5m_data),
+-		.ops = &clk_rcg2_fm_ops,
++		.ops = &clk_rcg2_fm_prepare_ops,
+ 	},
+ };
+ 
+@@ -1243,7 +1243,7 @@
+ 		.name = "nss_cc_mac4_rx_clk_src",
+ 		.parent_data = nss_cc_uniphy0_tx_uniphy1_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy0_tx_uniphy1_tx312p5m_data),
+-		.ops = &clk_rcg2_fm_ops,
++		.ops = &clk_rcg2_fm_prepare_ops,
+ 	},
+ };
+ 
+@@ -1575,7 +1575,7 @@
+ 		.name = "nss_cc_ahb_clk_src",
+ 		.parent_data = nss_cc_uniphy1_tx312p5m_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_uniphy1_tx312p5m_data),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_prepare_ops,
+ 	},
+ };
+ 
+@@ -1727,7 +1727,7 @@
+ 		.name = "nss_cc_sys_clk_src",
+ 		.parent_data = nss_cc_xo_data,
+ 		.num_parents = ARRAY_SIZE(nss_cc_xo_data),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_prepare_ops,
+ 	},
+ };
+ 

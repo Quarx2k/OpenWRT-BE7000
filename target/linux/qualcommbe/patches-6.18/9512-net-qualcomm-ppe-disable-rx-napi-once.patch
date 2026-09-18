@@ -1,0 +1,18 @@
+Subject: [PATCH] net: qualcomm: ppe: disable RX NAPI only once during teardown
+
+Both callers of edma_cfg_rx_napi_delete() have already disabled RX NAPI.
+A second napi_disable() waits forever for the NAPI scheduling bits cleared
+by napi_enable(), leaving kmodloader stuck when PPE port setup fails.
+
+Only delete the disabled NAPI instances in edma_cfg_rx_napi_delete().
+
+--- a/drivers/net/ethernet/qualcomm/ppe/edma_cfg_rx.c
++++ b/drivers/net/ethernet/qualcomm/ppe/edma_cfg_rx.c
+@@ -922,7 +922,6 @@
+ 		if (!rxdesc_ring->napi_added)
+ 			continue;
+ 
+-		napi_disable(&rxdesc_ring->napi);
+ 		netif_napi_del(&rxdesc_ring->napi);
+ 		rxdesc_ring->napi_added = false;
+ 	}
