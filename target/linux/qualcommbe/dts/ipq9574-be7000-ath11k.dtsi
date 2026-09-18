@@ -25,11 +25,12 @@
 
 &soc {
 	q6v5_wcss: remoteproc@cd00000 {
-		compatible = "qcom,ipq9574-wcss-pil";
+		compatible = "qcom,ipq9574-wcss-sec-pil";
 		reg = <0x0cd00000 0x4040>,
-		      <0x004ab000 0x20>,
 		      <0x0cb50000 0x8>;
-		reg-names = "qdsp6", "rmb", "wcmn";
+		reg-names = "qdsp6", "wcmn";
+		firmware-name = "ath11k/IPQ9574/hw1.0/q6_fw.mdt",
+				"ath11k/IPQ9574/hw1.0/m3_fw.mdt";
 		interrupts-extended = <&intc GIC_SPI 325 IRQ_TYPE_EDGE_RISING>,
 				      <&wcss_smp2p_in 0 IRQ_TYPE_NONE>,
 				      <&wcss_smp2p_in 1 IRQ_TYPE_NONE>,
@@ -40,41 +41,6 @@
 				  "ready",
 				  "handover",
 				  "stop-ack";
-		resets = <&gcc GCC_WCSSAON_RESET>,
-			 <&gcc GCC_WCSS_BCR>,
-			 <&gcc GCC_WCSS_Q6_BCR>,
-			 <&gcc GCC_WCSS_Q6_TBU_BCR>;
-		reset-names = "wcss_aon_reset",
-			      "wcss_reset",
-			      "wcss_q6_reset",
-			      "wcss_q6_bcr_reset";
-		clocks = <&gcc GCC_ANOC_WCSS_AXI_M_CLK>,
-			 <&gcc GCC_Q6_AHB_CLK>,
-			 <&gcc GCC_Q6_AHB_S_CLK>,
-			 <&gcc GCC_Q6_AXIM_CLK>,
-			 <&gcc GCC_Q6SS_BOOT_CLK>,
-			 <&gcc GCC_MEM_NOC_Q6_AXI_CLK>,
-			 <&gcc GCC_SYS_NOC_WCSS_AHB_CLK>,
-			 <&gcc GCC_WCSS_ACMT_CLK>,
-			 <&gcc GCC_WCSS_ECAHB_CLK>,
-			 <&gcc GCC_WCSS_Q6_TBU_CLK>,
-			 <&gcc GCC_Q6_AXIM2_CLK>,
-			 <&gcc GCC_WCSS_AHB_S_CLK>,
-			 <&gcc GCC_WCSS_AXI_M_CLK>;
-		clock-names = "anoc_wcss_axi_m",
-			      "q6_ahb",
-			      "q6_ahb_s",
-			      "q6_axim",
-			      "q6ss_boot",
-			      "mem_noc_q6_axi",
-			      "sys_noc_wcss_ahb",
-			      "wcss_acmt",
-			      "wcss_ecahb",
-			      "wcss_q6_tbu",
-			      "q6_axim2",
-			      "wcss_ahb_s",
-			      "wcss_axi_m";
-		qcom,halt-regs = <&tcsr 0x18000 0x1b000 0xe000>;
 		qcom,smem-states = <&wcss_smp2p_out 0>,
 				   <&wcss_smp2p_out 1>;
 		qcom,smem-state-names = "shutdown",
