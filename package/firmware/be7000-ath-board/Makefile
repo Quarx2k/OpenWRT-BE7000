@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=be7000-ath-board
 PKG_VERSION:=1.1.38
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_SOURCE:=qcom-wlan-firmware-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=file://$(TOPDIR)/dl
 PKG_HASH:=skip

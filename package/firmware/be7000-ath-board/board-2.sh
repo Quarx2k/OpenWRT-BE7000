@@ -39,7 +39,9 @@ entry() {
 }
 
 {
-	printf 'QCA-%s-BOARD\0' "${family^^}"
+	magic="QCA-${family^^}-BOARD"
+	printf '%s\0' "$magic"
+	padding "$((${#magic} + 1))"
 	entry 0 "$board"
 	entry 1 "$regdb"
 } > "$output"
