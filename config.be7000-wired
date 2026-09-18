@@ -9,6 +9,10 @@ CONFIG_BUILDBOT=y
 CONFIG_KERNEL_BUILD_DOMAIN="buildhost"
 CONFIG_KERNEL_BUILD_USER="builder"
 CONFIG_REPRODUCIBLE_DEBUG_INFO=y
+# Generate the firmware, without distributing an SDK or image builder.
+# CONFIG_IB is not set
+# CONFIG_SDK is not set
+# CONFIG_MAKE_TOOLCHAIN is not set
 # QSDK packages carry private kernel options and are excluded from this profile.
 # CONFIG_PACKAGE_kmod-qcom-wlan is not set
 # CONFIG_PACKAGE_kmod-cfg80211-native is not set
