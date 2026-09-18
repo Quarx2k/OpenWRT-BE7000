@@ -10,9 +10,6 @@ CONFIG_REPRODUCIBLE_DEBUG_INFO=y
 # CONFIG_IB is not set
 # CONFIG_SDK is not set
 # CONFIG_MAKE_TOOLCHAIN is not set
-# CONFIG_PACKAGE_kmod-qcom-wlan is not set
-# CONFIG_PACKAGE_kmod-cfg80211-native is not set
-# CONFIG_PACKAGE_qcom-wlan-firmware-xiaomi-be7000 is not set
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-app-package-manager=y
 CONFIG_PACKAGE_kmod-qcom-ppe-offload=y
