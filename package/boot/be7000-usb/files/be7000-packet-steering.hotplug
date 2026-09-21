@@ -1,6 +1,0 @@
-#!/bin/bash
-# SPDX-License-Identifier: GPL-2.0-only
-# hotplug-call sources this hook; leave the caller's shell options intact.
-if [ "${ACTION:-}" = add ]; then
-	/etc/init.d/packet_steering reload
-fi
