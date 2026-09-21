@@ -2,6 +2,7 @@
 /* BE7000 wiring and stock firmware memory reservations. */
 #include <dt-bindings/gpio/gpio.h>
 #include "ipq9574.dtsi"
+#include "ipq9574-be7000-nand.dtsi"
 
 / {
 	model = "Xiaomi BE7000";
