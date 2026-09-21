@@ -68,13 +68,9 @@ function find_reusable_wdev(phyidx)
 		nl80211.const.NL80211_CMD_GET_INTERFACE,
 		nl80211.const.NLM_F_DUMP,
 		{ wiphy: phyidx });
-	for (let res in data) {
-		/* Raw 802.11 radio control devices are not reusable data interfaces. */
-		if (int(trim(readfile(`/sys/class/net/${res.ifname}/type`))) == 801)
-			continue;
+	for (let res in data)
 		if (trim(readfile(`/sys/class/net/${res.ifname}/operstate`)) == "down")
 			return res.ifname;
-	}
 	return null;
 }
 
@@ -331,8 +327,6 @@ const phy_proto = {
 
 		let mac_wdev = {};
 		for (let wdev in wdevs) {
-			if (int(trim(readfile(`/sys/class/net/${wdev.ifname}/type`))) == 801)
-				continue;
 			if (wdev.iftype == nl80211.const.NL80211_IFTYPE_AP_VLAN)
 				continue;
 			if (this.radio != null && wdev.vif_radio_mask != null &&
@@ -343,8 +337,6 @@ const phy_proto = {
 
 		for (let wdev in wdevs) {
 			if (!mac_wdev[wdev.mac])
-				continue;
-			if (int(trim(readfile(`/sys/class/net/${wdev.ifname}/type`))) == 801)
 				continue;
 
 			cb(wdev.ifname);
