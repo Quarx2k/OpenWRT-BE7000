@@ -1733,6 +1733,27 @@ define Device/cudy_wbr3000uax-v1-ubootmod
 endef
 TARGET_DEVICES += cudy_wbr3000uax-v1-ubootmod
 
+define Device/cudy_p2-v1
+  DEVICE_VENDOR := Cudy
+  DEVICE_MODEL := P2
+  DEVICE_VARIANT := v1
+  DEVICE_DTS := mt7981b-cudy-p2-v1
+  DEVICE_DTS_DIR := ../dts
+  SUPPORTED_DEVICES += R91
+  UBINIZE_OPTS := -E 5
+  DEVICE_DTS_LOADADDR := 0x44000000
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 65536k
+  KERNEL_IN_UBI := 1
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  IMAGES := sysupgrade.bin
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  DEVICE_PACKAGES := kmod-ledtrig-network kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3 kmod-usb-serial-option kmod-usb-net-cdc-ether
+endef
+TARGET_DEVICES += cudy_p2-v1
+
 define Device/dlink_aquila-pro-ai-e30-a1
   DEVICE_VENDOR := D-Link
   DEVICE_MODEL := AQUILA PRO AI E30
@@ -2402,6 +2423,32 @@ define Device/keenetic_kn-1812
 endef
 TARGET_DEVICES += keenetic_kn-1812
 
+define Device/keenetic_kn-3411-common
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  KERNEL_SIZE := 6144k
+  IMAGE_SIZE := 108544k
+  KERNEL := kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb | \
+	append-squashfs4-fakeroot
+  IMAGES += factory.bin
+  IMAGE/factory.bin := append-kernel | pad-to $$(KERNEL_SIZE) | \
+	append-ubi | check-size | zyimage -d $$(ZYIMAGE_ID) -v "$$(DEVICE_VARIANT)"
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+endef
+
+define Device/keenetic_kn-3411
+  DEVICE_VENDOR := Keenetic
+  DEVICE_MODEL := Buddy 6
+  DEVICE_VARIANT := KN-3411
+  DEVICE_DTS := mt7981b-keenetic-kn-3411
+  ZYIMAGE_ID := 0x803411
+  $(call Device/keenetic_kn-3411-common)
+endef
+TARGET_DEVICES += keenetic_kn-3411
+
 define Device/keenetic_kn-3711
   DEVICE_VENDOR := Keenetic
   DEVICE_MODEL := KN-3711
@@ -2461,6 +2508,16 @@ define Device/keenetic_kn-3911
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 TARGET_DEVICES += keenetic_kn-3911
+
+define Device/keenetic_kn-4410
+  DEVICE_VENDOR := Keenetic
+  DEVICE_MODEL := Buddy 6 SE
+  DEVICE_VARIANT := KN-4410
+  DEVICE_DTS := mt7981b-keenetic-kn-4410
+  ZYIMAGE_ID := 0x804410
+  $(call Device/keenetic_kn-3411-common)
+endef
+TARGET_DEVICES += keenetic_kn-4410
 
 define Device/konka_komi-a31
   DEVICE_VENDOR := Konka
@@ -2888,6 +2945,26 @@ define Device/netcraze_nc-1812
   $(call Device/keenetic_kn-1812-common)
 endef
 TARGET_DEVICES += netcraze_nc-1812
+
+define Device/netcraze_nc-3411
+  DEVICE_VENDOR := Netcraze
+  DEVICE_MODEL := Buddy 6
+  DEVICE_VARIANT := NC-3411
+  DEVICE_DTS := mt7981b-netcraze-nc-3411
+  ZYIMAGE_ID := 0xC03411
+  $(call Device/keenetic_kn-3411-common)
+endef
+TARGET_DEVICES += netcraze_nc-3411
+
+define Device/netcraze_nc-4410
+  DEVICE_VENDOR := Netcraze
+  DEVICE_MODEL := Buddy 6 SE
+  DEVICE_VARIANT := NC-4410
+  DEVICE_DTS := mt7981b-netcraze-nc-4410
+  ZYIMAGE_ID := 0xC04410
+  $(call Device/keenetic_kn-3411-common)
+endef
+TARGET_DEVICES += netcraze_nc-4410
 
 define Device/netgear_eax17
   DEVICE_VENDOR := NETGEAR
