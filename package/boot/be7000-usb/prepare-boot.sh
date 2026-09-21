@@ -15,8 +15,7 @@ for file in "$package"/installer/boot/*.sh; do
     chmod 755 "$base/boot/${file##*/}"
 done
 cp "$package/installer/boot/kexec" "$base/boot/kexec"
-cp "$package/installer/boot/COPYING" "$package/installer/boot/README.kexec" "$base/boot/"
-cp "$package"/installer/boot/*.patch "$base/boot/"
+cp "$package/installer/boot/COPYING" "$base/boot/"
 chmod 755 "$base/boot/kexec"
 cp -L "$rootfs/bin/bash" "$base/boot/bash-runtime/bin/"
 for lib in ld-musl-aarch64.so.1 libc.so libgcc_s.so.1 libncursesw.so.6; do

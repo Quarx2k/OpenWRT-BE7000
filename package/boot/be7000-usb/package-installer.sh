@@ -7,9 +7,17 @@ work=$(mktemp -d "${output}.installer.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 base=$work/BE7000-OpenWrt-Snapshot-Installer
 mkdir -p "$base/installer"
-mv "$output" "$base/firmware.tar.gz"
+# Keep build/debug metadata in the USB build artifact, not in the user installer.
+mkdir "$work/firmware"
+tar -xzf "$output" -C "$work/firmware"
+for firmware in "$work"/firmware/BE7000-OpenWrt-Snapshot*; do
+    rm -f "$firmware/README.txt" "$firmware/boot/README.kexec" \
+        "$firmware"/boot/*.patch "$firmware/payload/System.map" \
+        "$firmware/payload/target-layout.json" "$firmware/payload/stock-sender/module-options"
+done
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" \
+    -C "$work/firmware" -czf "$base/firmware.tar.gz" .
 cp "$package/installer/$launcher" "$base/"
-cp "$package/installer/README.txt" "$base/"
 cp "$package/installer/router-install.sh" "$package/installer/autostart.sh" "$package/installer/hook.sh" "$base/installer/"
 chmod 755 "$base"/*.sh "$base/installer"/*.sh 2>/dev/null || true
 if [[ $platform == windows ]]; then
