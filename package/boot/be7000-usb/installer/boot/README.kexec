@@ -1,0 +1,11 @@
+The static AArch64 kexec executable is the audited BE7000 v63 userspace loader,
+copied from kexec-stock-nand-quiesce-v63-firmware-20260127/kexec.
+It supports --kernel-base and the Xiaomi stock /dev/kexec sender interface.
+License: GPL-2.0; see COPYING.
+
+Source: kexec-tools 2.0.32, available at
+https://www.kernel.org/pub/linux/utils/kernel/kexec/kexec-tools-2.0.32.tar.xz
+The BE7000 patches are stored alongside this file in the OpenWrt source tree:
+kexec-tools-be7000-v13.patch and kexec-tools-arm64-kernel-base-v29.patch.
+They are also included in the USB bundle. Reuse this loader with the supplied
+stock sender modules; an ordinary distribution kexec is not a substitute.

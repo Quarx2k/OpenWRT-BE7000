@@ -48,22 +48,26 @@ endef
 TARGET_DEVICES += qcom_rdp433
 
 define Build/be7000-system
-	bash $(TOPDIR)/target/linux/qualcommbe/image/be7000-usb-image.sh system \
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh system \
 		$@ $(STAGING_DIR_HOST) $(SOURCE_DATE_EPOCH)
 endef
 
 define Build/be7000-userdata
-	bash $(TOPDIR)/target/linux/qualcommbe/image/be7000-usb-image.sh userdata \
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh userdata \
 		$(IMAGE_ROOTFS) $@ $(STAGING_DIR_HOST) $(SOURCE_DATE_EPOCH)
 endef
 
 define Build/be7000-usb-bundle
-	bash $(TOPDIR)/target/linux/qualcommbe/image/be7000-usb-image.sh bundle $@ \
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh bundle $@ \
 		$(KDIR)/Image-initramfs $(KDIR)/vmlinux-initramfs.debug \
 		$(KDIR)/image-$(DEVICE_DTS).dtb \
 		$(KDIR)/tmp/$(DEVICE_IMG_PREFIX)-ext4-system.img \
 		$(KDIR)/tmp/$(DEVICE_IMG_PREFIX)-ext4-userdata.img \
-		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME)
+		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME) $(TARGET_DIR) $(TOPDIR)
+endef
+
+define Build/be7000-installer
+	bash $(TOPDIR)/package/boot/be7000-usb/package-installer.sh $@ $(1) $(SOURCE_DATE_EPOCH)
 endef
 
 define Device/xiaomi_be7000-common
@@ -76,8 +80,10 @@ define Device/xiaomi_be7000-common
 	IMAGES := system.img userdata.img
 	IMAGE/system.img := append-rootfs | be7000-system
 	IMAGE/userdata.img := be7000-userdata
-	ARTIFACTS := usb.tar.gz
+	ARTIFACTS := usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz
 	ARTIFACT/usb.tar.gz := be7000-usb-bundle
+	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-installer linux
+	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-installer windows
 endef
 
 define Device/xiaomi_be7000-native

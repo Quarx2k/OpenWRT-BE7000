@@ -37,8 +37,8 @@ case "$mode" in
 		xiaomi_be7000) ;;
 		xiaomi_be7000-native)
 			directory+=-Native
-			wlan='native ath12k for PCIe 5 GHz (experimental)'
-			wlan_files=$'Upstream QCN9274-family firmware is included for QCN9224.\nBE7000 ath12k board/calibration data still needs integration.\nIntegrated IPQ9574 2.4 GHz WLAN is not supported by this tree.\nNo QSDK WLAN modules, stock WLAN firmware or INI are included.'
+			wlan='native ath11k (2.4 GHz) and ath12k (5 GHz)'
+			wlan_files='The installer copies calibration from the installing router into userdata.'
 			;;
 		xiaomi_be7000-wired)
 			directory+=-Wired
@@ -47,7 +47,9 @@ case "$mode" in
 			;;
 		*) echo "Unsupported BE7000 device: $9" >&2; exit 2 ;;
 		esac
-		sender=$(dirname "${BASH_SOURCE[0]}")/be7000
+		package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+		rootfs=${10} topdir=${11}
+		sender=$topdir/target/linux/qualcommbe/image/be7000
 		[[ -s $image && -s $elf && -s $dtb && -s $system && -s $userdata ]]
 		[[ -s $sender/kexec_mod.ko && -s $sender/kexec_mod_arm64.ko ]]
 		work=$(mktemp -d "${output}.work.XXXXXX")
@@ -77,16 +79,17 @@ case "$mode" in
 		printf 'holding_pen=%s\n' "$pen_hex" >"$base/payload/stock-sender/module-options"
 		printf '{\n  "kernel_base": "0x%x",\n  "kernel_entry": "0x%x",\n  "text_offset": %d,\n  "image_size": %d,\n  "image_bytes": %d,\n  "kernel_memsz": %d,\n  "secondary_holding_pen": "0x%x",\n  "cpu_release_addr": "0x4fb3eff8"\n}\n' \
 			"$kernel_base" "$entry" "$text_offset" "$image_size" "$image_bytes" "$memsz" "$pen" >"$base/payload/target-layout.json"
+		bash "$package/prepare-boot.sh" "$base" "$rootfs" "$entry" "$memsz" "$pen_hex"
+		[[ ${9:-} != xiaomi_be7000-native ]] || touch "$base/native-wlan"
 		cat >"$base/README.txt" <<EOF
 Xiaomi BE7000 / OpenWrt snapshot / native Linux 6.18
 Ethernet: $ethernet. WLAN: $wlan.
 
 system.img: read-only 512 MiB ext4 system, label be7000-system.
 userdata.img: writable 512 MiB ext4 overlay, label be7000-userdata.
-Use a new USB directory $directory; keep existing userdata intact.
+The installer uses BE7000-OpenWrt-Snapshot and preserves existing userdata.
 $wlan_files
-The external WLAN image embeds this router's local calibration archive.
-Images containing that calibration are private to this device.
+Per-device WLAN calibration is not included in this build.
 Passwords and 5.4 WLAN modules are not included.
 
 Boot diagnostics are saved in logs/openwrt-<boot-id>/; logs/latest points
@@ -100,13 +103,13 @@ Xiaomi stock kernels 5.4.164 (20240122, 20260127). Normal image builds reuse the
 When loading kexec_mod_arm64.ko, pass the holding_pen argument saved in
 payload/stock-sender/module-options. It is generated for THIS Image.
 target-layout.json records the required load range and CPU entry address.
-The stock loader still needs the audited stock profile and quiesce sequence.
+boot/start.sh includes the audited stock loader and quiesce sequence.
 Boot arguments must retain rdinit=/usr/libexec/be7000-usb-init maxcpus=4
 be7000_printk=1 be7000_handoff=1 from the DTB. Add:
 be7000_usb_dir=$directory be7000_usb_uuid=<USB UUID>
 The DTB appends pcie_port_pm=off to keep PCIe ports awake during WLAN bring-up.
-No NAND write is involved. This is the Linux 6.18 port of the tested Linux 6.12
-USB/Ethernet/P74 WLAN integration. Linux 6.18 hardware validation is pending.
+System images stay on USB; autostart uses a stock firewall include in /data.
+Use the Windows or Linux installer archive for initial setup and updates.
 EOF
 		tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" -C "$work" -czf "$output" "$directory"
 		;;

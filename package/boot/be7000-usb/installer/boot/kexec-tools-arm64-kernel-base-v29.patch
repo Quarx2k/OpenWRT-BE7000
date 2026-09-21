@@ -1,0 +1,117 @@
+--- a/kexec/arch/arm64/include/arch/options.h
++++ b/kexec/arch/arm64/include/arch/options.h
+@@ -6,7 +6,8 @@
+ #define OPT_INITRD		((OPT_MAX)+2)
+ #define OPT_REUSE_CMDLINE	((OPT_MAX)+3)
+ #define OPT_SERIAL		((OPT_MAX)+4)
+-#define OPT_ARCH_MAX		((OPT_MAX)+5)
++#define OPT_KERNEL_BASE		((OPT_MAX)+5)
++#define OPT_ARCH_MAX		((OPT_MAX)+6)
+ 
+ #define KEXEC_ARCH_OPTIONS \
+ 	KEXEC_OPTIONS \
+@@ -15,6 +16,7 @@
+ 	{ "dtb",           1, NULL, OPT_DTB }, \
+ 	{ "initrd",        1, NULL, OPT_INITRD }, \
+ 	{ "serial",        1, NULL, OPT_SERIAL }, \
++	{ "kernel-base",   1, NULL, OPT_KERNEL_BASE }, \
+ 	{ "ramdisk",       1, NULL, OPT_INITRD }, \
+ 	{ "reuse-cmdline", 0, NULL, OPT_REUSE_CMDLINE }, \
+ 
+@@ -28,6 +30,7 @@ static const char arm64_opts_usage[] __attribute__ ((unused)) =
+ "     --dtb=FILE            Use FILE as the device tree blob.\n"
+ "     --initrd=FILE         Use FILE as the kernel initial ramdisk.\n"
+ "     --serial=STRING       Name of console used for purgatory printing. (e.g. ttyAMA0)\n"
++"     --kernel-base=ADDR    Force the 2 MiB-aligned physical Image base.\n"
+ "     --ramdisk=FILE        Use FILE as the kernel initial ramdisk.\n"
+ "     --reuse-cmdline       Use kernel command line from running system.\n";
+ 
+@@ -36,6 +39,8 @@ struct arm64_opts {
+ 	const char *dtb;
+ 	const char *initrd;
+ 	const char *console;
++	unsigned long kernel_base;
++	int kernel_base_set;
+ };
+ 
+ extern struct arm64_opts arm64_opts;
+--- a/kexec/arch/arm64/kexec-arm64.c
++++ b/kexec/arch/arm64/kexec-arm64.c
+@@ -169,6 +169,19 @@ int arch_process_options(int argc, char **argv)
+ 		case OPT_SERIAL:
+ 			arm64_opts.console = optarg;
+ 			break;
++		case OPT_KERNEL_BASE: {
++			char *end;
++
++			errno = 0;
++			arm64_opts.kernel_base = strtoul(optarg, &end, 0);
++			if (errno || end == optarg || *end != '\0') {
++				fprintf(stderr, "Invalid --kernel-base value: %s\n",
++					optarg);
++				return -1;
++			}
++			arm64_opts.kernel_base_set = 1;
++			break;
++		}
+ 		default:
+ 			break; /* Ignore core and unknown options. */
+ 		}
+@@ -185,6 +198,9 @@ int arch_process_options(int argc, char **argv)
+ 							arm64_opts.dtb));
+ 	dbgprintf("%s:%d: console: %s\n", __func__, __LINE__,
+ 		arm64_opts.console);
++	if (arm64_opts.kernel_base_set)
++		dbgprintf("%s:%d: forced kernel base: 0x%lx\n", __func__,
++			__LINE__, arm64_opts.kernel_base);
+ 
+ 	if (do_kexec_file_syscall)
+ 		arm64_opts.dtb = NULL;
+@@ -681,6 +697,47 @@ on_error:
+ unsigned long arm64_locate_kernel_segment(struct kexec_info *info)
+ {
+ 	unsigned long hole;
++	unsigned long image_span;
++
++	if (arm64_opts.kernel_base_set) {
++		if (info->kexec_flags & KEXEC_ON_CRASH) {
++			fprintf(stderr,
++				"--kernel-base is not supported for crash kernels\n");
++			return ULONG_MAX;
++		}
++		if (arm64_mem.text_offset > ULONG_MAX - arm64_mem.image_size) {
++			fprintf(stderr, "Kernel Image span overflows unsigned long\n");
++			return ULONG_MAX;
++		}
++
++		image_span = arm64_mem.text_offset + arm64_mem.image_size;
++		hole = arm64_opts.kernel_base;
++		if ((hole & (MiB(2) - 1)) || hole < mem_min || hole > mem_max ||
++		    !image_span || image_span - 1 > mem_max - hole) {
++			fprintf(stderr,
++				"Forced kernel base 0x%lx is unaligned or outside "
++				"the requested memory range\n", hole);
++			return ULONG_MAX;
++		}
++
++		/*
++		 * A normal reboot Image may intentionally replace the currently
++		 * running kernel.  /proc/iomem can split that destination around
++		 * the old kernel's freed .init reservation, so whitelist only the
++		 * exact forced Image segment for the generic userspace validator.
++		 */
++		info->memory_range = xrealloc(info->memory_range,
++			(info->memory_ranges + 1) * sizeof(*info->memory_range));
++		info->memory_range[info->memory_ranges].start =
++			hole + arm64_mem.text_offset;
++		info->memory_range[info->memory_ranges].end =
++			hole + image_span - 1;
++		info->memory_range[info->memory_ranges].type = RANGE_RAM;
++		info->memory_ranges++;
++
++		dbgprintf("%s: forced kernel_segment: %016lx\n", __func__, hole);
++		return hole;
++	}
+ 
+ 	if (info->kexec_flags & KEXEC_ON_CRASH) {
+ 		unsigned long hole_end;

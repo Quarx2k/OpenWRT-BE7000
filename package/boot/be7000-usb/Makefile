@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=be7000-usb
-PKG_RELEASE:=11
+PKG_RELEASE:=12
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/package.mk
@@ -20,6 +20,8 @@ define Package/be7000-usb/install
 	$(INSTALL_DIR) $(1)/usr/libexec $(1)/etc $(1)/mnt/usb $(1)/rom $(1)/overlay
 	$(INSTALL_BIN) ./files/be7000-usb-init $(1)/usr/libexec/
 	$(INSTALL_BIN) ./files/be7000-usb-log $(1)/usr/libexec/
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/be7000-boot-confirm $(1)/etc/init.d/be7000-boot-confirm
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/be7000-flow-offload $(1)/etc/uci-defaults/90-be7000-flow-offload
 	$(INSTALL_DIR) $(1)/usr/libexec/platform
