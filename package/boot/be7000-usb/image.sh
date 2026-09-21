@@ -24,7 +24,7 @@ case "$mode" in
 		mkdir "$work/upper" "$work/work"
 		"$host/bin/debugfs" -R 'cat /etc/be7000-system-id' "$rootfs" >"$work/base-id" 2>/dev/null
 		[[ -s $work/base-id ]]
-		"$host/bin/make_ext4fs" -L be7000-userdata -l 536870912 -b 4096 -m 0 -T "$epoch" "$output" "$work/"
+		"$host/bin/make_ext4fs" -L be7000-userdata -l 268435456 -b 4096 -m 0 -T "$epoch" "$output" "$work/"
 		finish_ext4
 		;;
 	bundle)
@@ -86,7 +86,7 @@ Xiaomi BE7000 / OpenWrt snapshot / native Linux 6.18
 Ethernet: $ethernet. WLAN: $wlan.
 
 system.img: read-only 512 MiB ext4 system, label be7000-system.
-userdata.img: writable 512 MiB ext4 overlay, label be7000-userdata.
+userdata.img: writable 256 MiB ext4 overlay, label be7000-userdata.
 The installer uses BE7000-OpenWrt-Snapshot and preserves existing userdata.
 $wlan_files
 Per-device WLAN calibration is not included in this build.
