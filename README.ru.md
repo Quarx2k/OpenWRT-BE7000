@@ -1,16 +1,16 @@
 # BE7000-OpenWrt
 
-**English** · [Русский](README.ru.md)
+[English](README.md) · **Русский**
 
-OpenWrt **SNAPSHOT r36375+96-9a9dcac759** for Xiaomi BE7000, based on **Linux 6.18.52**. Boots from a USB drive using **kexec**. Wi-Fi uses the native ath11k/ath12k drivers.
+OpenWrt **SNAPSHOT r36375+96-9a9dcac759** для Xiaomi BE7000 на базе **Linux 6.18.52**. Загрузка с USB-накопителя через **kexec**. Wi-Fi работает на штатных драйверах ath11k/ath12k.
 
-![LuCI on BE7000](images/luci-overview.png)
+![LuCI на BE7000](images/luci-overview.png)
 
-**[Download releases](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — Windows and Linux installers.
+**[Загрузить сборки](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — установщики для Windows и Linux.
 
-## Support the project
+## Поддержать проект
 
-| Currency | Network | Address |
+| Валюта | Сеть | Адрес |
 | --- | --- | --- |
 | <img src="images/bitcoin.svg" width="24" height="24" alt="BTC"> Bitcoin (BTC) | <img src="images/bitcoin.svg" width="18" height="18" alt=""> Bitcoin | `bc1qs7lpzg9f592k224uvh4qr5np2kn5s46wvg063n` |
 | <img src="images/ethereum.svg" width="24" height="24" alt="ETH"> Ethereum (ETH) | <img src="images/ethereum.svg" width="18" height="18" alt=""> Ethereum | `0x1Df32aB802A57E62BA0647FbCce90C7D66Fc0e53` |
