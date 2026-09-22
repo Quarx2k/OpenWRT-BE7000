@@ -4,6 +4,8 @@
 
 OpenWrt **SNAPSHOT r36375+96-9a9dcac759** для Xiaomi BE7000 на базе **Linux 6.18.52**. Загрузка с USB-накопителя через **kexec**. Wi-Fi работает на штатных драйверах ath11k/ath12k.
 
+Поддерживается аппаратное ускорение (PPE offload) для **PPPoE и Ethernet**.
+
 ![LuCI на BE7000](images/luci-overview.png)
 
 **[Загрузить сборки](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — установщики для Windows и Linux.
