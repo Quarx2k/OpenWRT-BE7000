@@ -5,6 +5,8 @@ Authors: Alexandru Gagniuc and Igor Kravchenko.
 Keep optional M3 loading local to IPQ9574 and acquire its Q6 reset.
 Allow the intended 200 polling intervals on IPQ9574 shutdown.
 Preserve QSDK's AXI-before-AHB clock enable order.
+BE7000 adaptation, M3 loading, shutdown timeout and clock-order fixes by
+Nickolai Semendiaev <agent00791@gmail.com>.
 
 diff --git a/drivers/remoteproc/qcom_q6v5_wcss.c b/drivers/remoteproc/qcom_q6v5_wcss.c
 index 23ec878..0128be9 100644

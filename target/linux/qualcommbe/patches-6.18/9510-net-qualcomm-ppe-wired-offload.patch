@@ -7,6 +7,8 @@ PPP routing in software: the interface does not expose its ingress session.
 Flow-table operations and resource handling are adapted from Julius
 Bairaktaris' HPPE driver (20862f96324f7080d1e1ff1b946b18dcb27ed21e),
 with APPE layouts checked against QSDK 12.1 SSDK.
+APPE/IPQ9574 adaptation and OpenWrt integration by
+Nickolai Semendiaev <agent00791@gmail.com>.
 
 --- a/drivers/net/ethernet/qualcomm/ppe/Makefile
 +++ b/drivers/net/ethernet/qualcomm/ppe/Makefile

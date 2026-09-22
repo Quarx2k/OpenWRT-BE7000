@@ -2,7 +2,8 @@ Subject: wifi: ath11k: add BE7000 native radio support for backports 7.2
 
 Adapted from kravasuper/openwrt 790d036a178c0f695c2f60d490d194091b35e595.
 The IPQ9574 support originates with Alexandru Gagniuc and Igor Kravchenko.
-PCI firmware memory follows named DT reservations, bounded independently.
+Adapted for backports 7.2 and the BE7000 native WLAN profile by
+Nickolai Semendiaev <agent00791@gmail.com>.
 
 diff --git a/drivers/net/wireless/ath/ath11k/ahb.c b/drivers/net/wireless/ath/ath11k/ahb.c
 index 91f2585..3cf1857 100644

@@ -4,6 +4,8 @@ Derived from the public OpenWrt qualcommax patch
 `target/linux/qualcommax/patches-6.18/0188-remoteproc-qcom-add-hexagon-based-wcss-secure-pil-driver.patch`
 at OpenWrt revision `3a117c0c53e31756f09067eec46b71e142b7c086`.
 The original Qualcomm/Linaro/Sony copyright notices are retained.
+The BE7000 compatibility packaging, M3 loading and coredump adaptations
+are by Nickolai Semendiaev <agent00791@gmail.com>.
 
 This package builds the PAS6/IPQ9574 path against the configured kernel's
 remoteproc headers and exports, without changing its Kconfig or public structures.

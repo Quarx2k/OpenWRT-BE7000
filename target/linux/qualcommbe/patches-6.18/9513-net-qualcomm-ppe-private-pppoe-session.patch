@@ -1,5 +1,10 @@
 Subject: net: qualcomm: PPE PPPoE offload with private session tracking
 
+PPPoE session tracking and validation added by
+Nickolai Semendiaev <agent00791@gmail.com>.
+Extends the APPE adaptation of Julius Bairaktaris' HPPE flowtable driver;
+the original driver's copyright is retained.
+
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
 @@ -1,7 +1,7 @@
