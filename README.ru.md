@@ -10,6 +10,26 @@ OpenWrt **SNAPSHOT r36375+96-9a9dcac759** для Xiaomi BE7000 на базе **L
 
 **[Загрузить сборки](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — установщики для Windows и Linux.
 
+## Сборка из исходников
+
+Используйте Linux или WSL2 с установленными зависимостями для сборки OpenWrt.
+
+```bash
+git clone --branch be7000-snapshot --single-branch \
+  https://github.com/Quarx2k/OpenWRT-BE7000.git
+cd OpenWRT-BE7000
+
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+cp config.be7000-native .config
+make defconfig
+make download -j8
+make -j"$(nproc)"
+```
+
+Готовые образы и архивы установщиков для Windows/Linux находятся в "bin/targets/qualcommbe/ipq95xx/".
+
 ## Поддержать проект
 
 | Валюта | Сеть | Адрес |

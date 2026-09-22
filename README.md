@@ -10,6 +10,26 @@ Hardware acceleration (PPE offload) is supported for **PPPoE and Ethernet**.
 
 **[Download releases](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — Windows and Linux installers.
 
+## Building from source
+
+Use Linux or WSL2 with the OpenWrt build dependencies installed.
+
+```bash
+git clone --branch be7000-snapshot --single-branch \
+  https://github.com/Quarx2k/OpenWRT-BE7000.git
+cd OpenWRT-BE7000
+
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+cp config.be7000-native .config
+make defconfig
+make download -j8
+make -j"$(nproc)"
+```
+
+Images and Windows/Linux installer archives are written to "bin/targets/qualcommbe/ipq95xx/".
+
 ## Support the project
 
 | Currency | Network | Address |
