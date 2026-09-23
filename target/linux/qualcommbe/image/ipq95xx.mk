@@ -85,11 +85,11 @@ define Device/xiaomi_be7000-common
 	SUPPORTED_DEVICES := xiaomi,be7000
 	SOC := ipq9574
 	KERNEL_LOADADDR := 0x42000000
-	IMAGES := system.img userdata.img sysupgrade.bin
+	IMAGES := $(if $(IB),sysupgrade.bin,system.img userdata.img sysupgrade.bin)
 	IMAGE/sysupgrade.bin := be7000-sysupgrade | append-metadata
 	IMAGE/system.img := append-rootfs | be7000-system
 	IMAGE/userdata.img := be7000-userdata
-	ARTIFACTS := usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz
+	ARTIFACTS := $(if $(IB),,usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz)
 	ARTIFACT/usb.tar.gz := be7000-usb-bundle
 	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-installer linux
 	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-installer windows

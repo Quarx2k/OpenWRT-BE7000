@@ -182,7 +182,7 @@ endef
 define FormatPackages
 $(strip $(foreach pkg,$(strip $(subst ",,$(1))),
   $(eval pkg_name:=$(firstword $(subst =, ,$(pkg))))
-  $(if $(findstring =,$(pkg)),$(eval pkg_ver:==$(lastword $(subst =, ,$(pkg)))))
+  $(eval pkg_ver:=$(if $(findstring =,$(pkg)),=$(lastword $(subst =, ,$(pkg)))))
   $(pkg_name)$(call GetABISuffix,$(pkg_name))$(pkg_ver)
 ))
 endef
