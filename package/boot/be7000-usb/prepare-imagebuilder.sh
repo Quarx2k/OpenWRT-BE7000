@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 top=$1 ib=$2
+mkdir -p "$ib/staging_dir/image"
+cp "$top/staging_dir/image/be7000-xiaomi_be7000-native-boot.tar" "$ib/staging_dir/image/"
 # Keep this build's local packages available alongside the official feeds.
 find "$top/bin/targets/qualcommbe/ipq95xx/packages" "$top/bin/packages/aarch64_cortex-a53" \
     -type f -name '*.apk' -exec cp -t "$ib/packages" {} +
