@@ -1,37 +1,42 @@
 Xiaomi BE7000 - OpenWrt snapshot / Linux 6.18 USB installer
 
-1. Boot Xiaomi stock 1.1.16 or 1.1.38 with root SSH already enabled.
-2. Connect one ext4 USB partition. At least 2 GB free is recommended.
-3. Extract this entire archive. Windows: run install.cmd. Linux: sh install.sh.
-4. Enter router IPv4 address, choose autostart, then enter the SSH password.
-   Files are installed and OpenWrt starts automatically. The window stays open.
+Run install.cmd on Windows or sh install.sh on Linux. Enter the current router
+IP (stock default: 192.168.32.1; OpenWrt usually: 192.168.1.1) and root SSH password.
+A second SSH connection opens the installation menu and may ask for the password
+again. No Python, PowerShell or additional network ports are used.
 
-Windows uses its built-in OpenSSH Client and tar.exe (Windows 10/11).
-Linux needs OpenSSH Client and tar. No Python, PowerShell, pip or extra ports.
-The first SSH connection may require normal host-key confirmation.
+The installer detects Xiaomi stock 1.1.16/1.1.38 or our running USB OpenWrt 6.18.
+When an installation exists, choose Update (default), Install from scratch, or
+Cancel. A new installation asks for confirmation. The window stays open.
 
-To use another build, replace firmware.tar.gz with that build's *-usb.tar.gz.
-Only installer-capable Linux 6.18 BE7000 bundles are supported. Do not substitute
-an initramfs .itb or a sysupgrade image. System and kernel must be from one build.
+Update creates clean userdata and restores the standard sysupgrade config backup:
+package configuration files, /lib/upgrade/keep.d and /etc/sysupgrade.conf rules.
+It does not copy old modules, the APK database or all files from the old overlay.
+Installed programs come from firmware.bin; extra packages must be reinstalled.
+Use attended sysupgrade (ASU) when an image with your selected packages is needed.
+Install from scratch erases OpenWrt settings and installed packages in this USB
+installation. Both modes preserve this router's Wi-Fi calibration.
 
-Installation uses BE7000-OpenWrt-Snapshot on USB. It never formats the disk.
-Existing userdata.img and its settings are kept; initial userdata is created
-only when absent. The installer reads this router's stock WLAN calibration.
-Installation must run from stock, because the OpenWrt system image is mounted
-while OpenWrt is running. Do not unplug power/USB during the update.
+On stock, settings are read from the old USB installation without booting it.
+The installer asks about USB autostart and starts OpenWrt immediately afterward.
+On OpenWrt, the installer adds USB sysupgrade support when missing and updates
+through sysupgrade. No preliminary reboot to stock is needed. Stock autostart
+configuration is kept; it must already be enabled to return automatically to
+OpenWrt after the final reboot. The actual boot still goes through stock/kexec.
 
-OpenWrt is normally at http://192.168.1.1/; an existing installation keeps its
-LAN address and passwords. A fresh installation has the standard OpenWrt
-defaults: set a root password and configure networking/Wi-Fi in LuCI.
+Only BE7000-OpenWrt-Snapshot is replaced. No disk formatting or firmware-partition
+writes are performed. Connect one mounted ext4 USB partition with 1.5 GiB free.
+Do not unplug power/USB during the update. The default fresh userdata is 256 MiB.
 
-Autostart changes only the named firewall include be7000_snapshot in stock,
-with its launcher under /data/BE7000-OpenWrt-Snapshot. The older be7000_openwrt
-include is disabled to avoid two launchers. Without USB, stock boots normally.
-After three unconfirmed automatic boots, the launcher stays in stock.
-To disable autostart from stock:
-  uci set firewall.be7000_snapshot.enabled=0
-  uci commit firewall
-For one-off manual startup in stock, run sh <USB mount>/BE7000-OpenWrt-Snapshot/boot/start.sh.
+To change firmware, replace firmware.bin with our *-native-ext4-sysupgrade.bin.
+Do not use an upstream image, a USB tar archive, an initramfs .itb, or a 5.4 image.
+The installer kit includes firmware.bin and all helpers needed for offline use.
+The firmware defaults to https://openwrt.quarx2k.dev for attended updates; an
+existing custom server address is preserved. No kernel ABI change is involved.
 
-No automatic retries after a failed installation. Read the error in the open
-window. Runtime logs stay on USB under boot/logs and logs/openwrt-<boot-id>.
+Existing network settings/passwords survive Update. Install from scratch uses
+standard OpenWrt defaults at http://192.168.1.1/. Configure a root password and
+networking/Wi-Fi after a fresh installation.
+
+Progress from an OpenWrt upgrade is logged on USB in boot/offline-upgrade.log
+and boot/sysupgrade.log. Stock startup uses boot/logs/installer-start-*.log.

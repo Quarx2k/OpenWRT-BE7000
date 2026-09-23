@@ -18,6 +18,8 @@ case "$mode" in
 		trap 'rm -rf -- "$work"' EXIT
 		tar -xzf "$output" -C "$work"
 		base=$(find "$work" -mindepth 1 -maxdepth 1 -type d)
+		rm -f "$base/boot/README.kexec" "$base"/boot/*.patch "$base/payload/System.map" \
+			"$base/payload/target-layout.json" "$base/payload/stock-sender/module-options"
 		mkdir "$work/sysupgrade-be7000"
 		upgrade=$work/sysupgrade-be7000
 		printf 'be7000-snapshot-usb-v1\n' > "$upgrade/FORMAT"
@@ -121,7 +123,8 @@ Ethernet: $ethernet. WLAN: $wlan.
 
 system.img: read-only 512 MiB ext4 system, label be7000-system.
 userdata.img: writable 256 MiB ext4 overlay, label be7000-userdata.
-The installer uses BE7000-OpenWrt-Snapshot and preserves existing userdata.
+The installer uses BE7000-OpenWrt-Snapshot and offers an update or a clean install.
+Updates migrate sysupgrade settings into fresh userdata; packages come from the image.
 $wlan_files
 Per-device WLAN calibration is not included in this build.
 Passwords and 5.4 WLAN modules are not included.

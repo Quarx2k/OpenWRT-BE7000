@@ -91,8 +91,8 @@ define Device/xiaomi_be7000-common
 	IMAGE/userdata.img := be7000-userdata
 	ARTIFACTS := $(if $(IB),,usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz)
 	ARTIFACT/usb.tar.gz := be7000-usb-bundle
-	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-installer linux
-	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-installer windows
+	ARTIFACT/installer-linux.tar.gz := be7000-sysupgrade | append-metadata | be7000-installer linux
+	ARTIFACT/installer-windows.tar.gz := be7000-sysupgrade | append-metadata | be7000-installer windows
 endef
 
 define Device/xiaomi_be7000-native

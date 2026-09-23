@@ -5,8 +5,8 @@ where ssh.exe >nul 2>nul
 if errorlevel 1 goto tools
 where tar.exe >nul 2>nul
 if errorlevel 1 goto tools
-if not exist firmware.tar.gz (
- echo Place the build USB archive here as firmware.tar.gz.
+if not exist firmware.bin (
+ echo Place our BE7000 sysupgrade image here as firmware.bin.
  goto failed
 )
 set "ROUTER_IP=192.168.32.1"
@@ -16,13 +16,12 @@ if errorlevel 1 (
  echo Enter an IPv4 address.
  goto failed
 )
-choice /c YN /n /m "Start OpenWrt automatically after reboot? [Y/N]: "
-if errorlevel 3 goto failed
-if errorlevel 2 (set "AUTOSTART=no") else (set "AUTOSTART=yes")
-echo Installing and starting OpenWrt. Enter the stock root SSH password when asked.
-tar.exe -cf - installer firmware.tar.gz | ssh.exe -o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlias=be7000-stock-%ROUTER_IP% -o StrictHostKeyChecking=accept-new root@%ROUTER_IP% "set -e; echo 'Connected. Installation in progress: transferring files to the router. Please wait...'; mkdir /tmp/be7000-install.lock; trap 'rmdir /tmp/be7000-install.lock' EXIT; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-autostart.lock /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; sh /tmp/be7000-snapshot-install/installer/router-install.sh %AUTOSTART%"
+set "SSH_OPTIONS=-o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlias=be7000-stock-%ROUTER_IP% -o StrictHostKeyChecking=accept-new"
+echo Enter the current root SSH password. It may be requested again for the installation menu.
+tar.exe -cf - installer firmware.bin | ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "set -e; echo 'Connected. Transferring firmware; please wait...'; mkdir /tmp/be7000-install.lock; trap 'rmdir /tmp/be7000-install.lock' EXIT; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; echo 'Transfer complete.'"
 if errorlevel 1 goto failed
-echo OpenWrt startup is scheduled. Wait for the router, then open http://192.168.1.1/ or your saved LAN address.
+ssh.exe -t %SSH_OPTIONS% root@%ROUTER_IP% "sh /tmp/be7000-snapshot-install/installer/router-install.sh"
+if errorlevel 1 goto failed
 pause
 exit /b 0
 :tools

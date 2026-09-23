@@ -25,6 +25,17 @@ layout() {
     [ ! -e "$base/.upgrade-next" ] && [ ! -L "$base/.upgrade-next" ] || fail 'Previous preparation remains in .upgrade-next; remove it before retrying'
 }
 
+restore_config() {
+    upper=$1
+    [ -d "$upper" ] || fail 'Missing new userdata upper directory'
+    if [ -n "${2:-}" ]; then
+        tar -xzf "$2" -C "$upper"
+    fi
+    # Package state comes from the new image, never from the saved overlay.
+    rm -rf "$upper/lib/apk" "$upper/usr/lib/apk" "$upper/lib/modules" "$upper/usr/lib/modules"
+    rm -f "$upper/etc/apk/world" "$upper/etc/apk/repositories.d/distfeeds.list"
+}
+
 check_image() {
     image=$1
     command -v losetup >/dev/null || fail 'The losetup package is required'
@@ -43,6 +54,14 @@ check_image() {
     board=$(jsonfilter -i "$meta" -e '@.supported_devices[0]')
     rm -f "$meta"
     [ "$board" = 'xiaomi,be7000' ] || fail 'Incompatible firmware metadata'
+    verify_archive "$image"
+    free=$(df -Pk /mnt/usb | awk 'END {print $4}')
+    needed=$((536870912 / 1024 + userdata_mib * 1024 + 524288))
+    [ "$free" -ge "$needed" ] || fail 'Not enough free USB space for this update'
+}
+
+verify_archive() {
+    image=$1
     [ "$(tar -xOf "$image" "$prefix/FORMAT")" = 'be7000-snapshot-usb-v1' ] || fail 'Wrong image format'
     expected=$(printf '%s\n' "$prefix/FORMAT" "$prefix/FILES"; for name in $files; do echo "$prefix/$name"; done)
     [ "$(tar -tf "$image")" = "$expected" ] || fail 'Unexpected or duplicate archive members'
@@ -54,9 +73,6 @@ check_image() {
         [ "$size" -gt 0 ] && [ "$size" -le 134217728 ] || fail "Oversized component $name"
         [ "$(tar -xOf "$image" "$prefix/$name" | wc -c)" -eq "$size" ] || fail "Incomplete component $name"
     done
-    free=$(df -Pk /mnt/usb | awk 'END {print $4}')
-    needed=$((536870912 / 1024 + userdata_mib * 1024 + 524288))
-    [ "$free" -ge "$needed" ] || fail 'Not enough free USB space for this update'
 }
 
 stage() {
@@ -101,13 +117,8 @@ stage() {
     mkdir /tmp/be7000-upgrade-data/upper /tmp/be7000-upgrade-data/work
     cp /tmp/be7000-upgrade-system/etc/be7000-system-id /tmp/be7000-upgrade-data/base-id
     [ -x /tmp/be7000-upgrade-system/usr/libexec/be7000-usb-upgrade ] || fail 'Image lacks USB upgrade support'
-    if [ -n "${2:-}" ]; then
-        tar -xzf "$2" -C /tmp/be7000-upgrade-data/upper
-    fi
-    # Package state comes from the new image, never from the saved overlay.
+    restore_config /tmp/be7000-upgrade-data/upper "${2:-}"
     upper=/tmp/be7000-upgrade-data/upper
-    rm -rf "$upper/lib/apk" "$upper/usr/lib/apk" "$upper/lib/modules" "$upper/usr/lib/modules"
-    rm -f "$upper/etc/apk/world" "$upper/etc/apk/repositories.d/distfeeds.list"
     for item in ath11k/IPQ9574/hw1.0/cal-ahb-c000000.wifi.bin ath12k/QCN9274/hw2.0/cal-pci-0002:01:00.0.bin; do
         [ -s "/lib/firmware/$item" ] || fail "Missing calibration: $item"
         mkdir -p "$upper/lib/firmware/$(dirname "$item")"
@@ -159,8 +170,10 @@ commit() {
 }
 
 case "${1:-}" in
+    verify) verify_archive "$2";;
+    restore) restore_config "$2" "${3:-}";;
     check) check_image "$2";;
     stage) stage "$2" "${3:-}";;
     commit) commit;;
-    *) fail 'Usage: usb-upgrade.sh check IMAGE | stage IMAGE [BACKUP] | commit';;
+    *) fail 'Usage: usb-upgrade.sh check|verify IMAGE | stage IMAGE [BACKUP] | restore UPPER [BACKUP] | commit';;
 esac
