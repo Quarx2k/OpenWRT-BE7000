@@ -103,7 +103,9 @@ cat /proc/cmdline >"$base/logs/last-cmdline.txt"
 cat /proc/cmdline >"$log_dir/cmdline.txt"
 printf '%s\n' "$boot_id" >"$log_dir/boot-id.txt"
 uname -a >"$log_dir/uname.txt"
-/usr/libexec/be7000-usb-log "$log_dir" </dev/null &
+if [[ " ${cmdline[*]} " == *" be7000_diagnostic=1 "* ]]; then
+	/usr/libexec/be7000-usb-log "$log_dir" </dev/null &
+fi
 
 check_ext4() {
 	local rc=0
