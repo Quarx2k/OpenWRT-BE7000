@@ -4,6 +4,7 @@ url=$(uci -q get attendedsysupgrade.server.url)
 case "$url" in
     ''|https://sysupgrade.openwrt.org)
         uci set attendedsysupgrade.server.url='https://openwrt.quarx2k.dev'
+        uci set attendedsysupgrade.client.advanced_mode='1'
         uci commit attendedsysupgrade;;
 esac
 exit 0
