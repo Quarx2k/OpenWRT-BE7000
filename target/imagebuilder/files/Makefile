@@ -165,6 +165,10 @@ BUILD_PACKAGES+= \
   "kernel=$(KERNEL_VERSION)"
 endif
 
+# Exact versions of the BE7000 drivers exported by its build.
+-include package/boot/be7000-usb/imagebuilder-pins.mk
+BUILD_PACKAGES:=$(foreach pkg,$(BUILD_PACKAGES),$(or $(filter $(pkg)=%,$(BE7000_PINNED_PACKAGES)),$(pkg)))
+
 # Get ABI version suffix for a package from an apk index
 #
 # 1: package name

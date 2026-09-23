@@ -134,6 +134,11 @@ endif
 	  | $(XARGS) rm -rf
 	$(INSTALL_DIR) $(IB_IDIR)
 	-$(CP) $(STAGING_DIR_IMAGE)/* $(IB_IDIR)/
+	if [ "$(BOARD)" = qualcommbe ] && [ -d $(TOPDIR)/package/boot/be7000-usb ]; then \
+		$(INSTALL_DIR) $(PKG_BUILD_DIR)/package/boot; \
+		$(CP) $(TOPDIR)/package/boot/be7000-usb $(PKG_BUILD_DIR)/package/boot/; \
+		bash $(TOPDIR)/package/boot/be7000-usb/prepare-imagebuilder.sh $(TOPDIR) $(PKG_BUILD_DIR); \
+	fi
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/staging_dir/host/bin
 	$(CP) $(STAGING_DIR_HOST)/bin/* $(PKG_BUILD_DIR)/staging_dir/host/bin/
 	(cd $(PKG_BUILD_DIR); find staging_dir/host/bin/ $(IB_LDIR)/scripts/dtc/ -type f | \
