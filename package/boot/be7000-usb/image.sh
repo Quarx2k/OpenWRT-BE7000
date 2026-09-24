@@ -12,6 +12,24 @@ finish_ext4() {
 }
 
 case "$mode" in
+	sysupgrade)
+		output=$1
+		work=$(mktemp -d "${output}.work.XXXXXX")
+		trap 'rm -rf -- "$work"' EXIT
+		tar -xzf "$output" -C "$work"
+		base=$(find "$work" -mindepth 1 -maxdepth 1 -type d)
+		rm -f "$base/boot/README.kexec" "$base"/boot/*.patch "$base/payload/System.map" \
+			"$base/payload/target-layout.json" "$base/payload/stock-sender/module-options"
+		mkdir "$work/sysupgrade-be7000"
+		upgrade=$work/sysupgrade-be7000
+		printf 'be7000-snapshot-usb-v1\n' > "$upgrade/FORMAT"
+		gzip -1 -c "$base/system.img" > "$upgrade/system.img.gz"
+		tar -C "$base" -czf "$upgrade/boot.tar.gz" boot
+		tar -C "$base" -czf "$upgrade/payload.tar.gz" payload
+		(cd "$upgrade"; wc -c system.img.gz boot.tar.gz payload.tar.gz | head -n 3) > "$upgrade/FILES"
+		tar -C "$work" -cf "$output" sysupgrade-be7000/FORMAT sysupgrade-be7000/FILES \
+			sysupgrade-be7000/system.img.gz sysupgrade-be7000/boot.tar.gz sysupgrade-be7000/payload.tar.gz
+		;;
 	system)
 		output=$1 host=$2 epoch=$3
 		"$host/bin/tune2fs" -L be7000-system "$output"
@@ -50,7 +68,12 @@ case "$mode" in
 		package=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 		rootfs=${10} topdir=${11}
 		sender=$topdir/target/linux/qualcommbe/image/be7000
-		[[ -s $image && -s $elf && -s $dtb && -s $system && -s $userdata ]]
+		template=$topdir/staging_dir/image/be7000-${9}-boot.tar
+		[[ -s $system ]]
+		[[ $userdata == - || -s $userdata ]]
+		if [[ ! -s $template || -s $elf ]]; then
+			[[ -s $image && -s $elf && -s $dtb ]]
+		fi
 		[[ -s $sender/kexec_mod.ko && -s $sender/kexec_mod_arm64.ko ]]
 		work=$(mktemp -d "${output}.work.XXXXXX")
 		trap 'rm -rf -- "$work"' EXIT
@@ -59,7 +82,15 @@ case "$mode" in
 		mkdir "$base/payload/stock-sender"
 		cp "$sender/kexec_mod.ko" "$sender/kexec_mod_arm64.ko" "$base/payload/stock-sender/"
 		cp --sparse=always "$system" "$base/system.img"
-		cp --sparse=always "$userdata" "$base/userdata.img"
+		if [[ $userdata == - ]]; then
+			bash "$package/image.sh" system "$base/system.img" "$topdir/staging_dir/host" "$epoch"
+			bash "$package/image.sh" userdata "$base/system.img" "$base/userdata.img" "$topdir/staging_dir/host" "$epoch"
+		else
+			cp --sparse=always "$userdata" "$base/userdata.img"
+		fi
+		if [[ ! -s $elf && -s $template ]]; then
+			tar -xf "$template" -C "$base"
+		else
 		cp "$image" "$base/payload/Image"
 		cp "$dtb" "$base/payload/be7000-spin-table.dtb"
 		"$nm" -n "$elf" >"$base/payload/System.map"
@@ -80,6 +111,11 @@ case "$mode" in
 		printf '{\n  "kernel_base": "0x%x",\n  "kernel_entry": "0x%x",\n  "text_offset": %d,\n  "image_size": %d,\n  "image_bytes": %d,\n  "kernel_memsz": %d,\n  "secondary_holding_pen": "0x%x",\n  "cpu_release_addr": "0x4fb3eff8"\n}\n' \
 			"$kernel_base" "$entry" "$text_offset" "$image_size" "$image_bytes" "$memsz" "$pen" >"$base/payload/target-layout.json"
 		bash "$package/prepare-boot.sh" "$base" "$rootfs" "$entry" "$memsz" "$pen_hex"
+		mkdir -p "$(dirname "$template")"
+		template_tmp=$(mktemp "$template.XXXXXX")
+		tar -C "$base" -cf "$template_tmp" boot payload
+		mv "$template_tmp" "$template"
+		fi
 		[[ ${9:-} != xiaomi_be7000-native ]] || touch "$base/native-wlan"
 		cat >"$base/README.txt" <<EOF
 Xiaomi BE7000 / OpenWrt snapshot / native Linux 6.18
@@ -87,7 +123,8 @@ Ethernet: $ethernet. WLAN: $wlan.
 
 system.img: read-only 512 MiB ext4 system, label be7000-system.
 userdata.img: writable 256 MiB ext4 overlay, label be7000-userdata.
-The installer uses BE7000-OpenWrt-Snapshot and preserves existing userdata.
+The installer uses BE7000-OpenWrt-Snapshot and offers an update or a clean install.
+Updates migrate sysupgrade settings into fresh userdata; packages come from the image.
 $wlan_files
 Per-device WLAN calibration is not included in this build.
 Passwords and 5.4 WLAN modules are not included.

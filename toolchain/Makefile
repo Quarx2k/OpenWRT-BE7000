@@ -65,12 +65,14 @@ endif
 ifdef CONFIG_BUILDBOT
 ifneq ($(wildcard $(TOPDIR)/.git),)
   $(TOOLCHAIN_DIR)/stamp/.ver_check: $(TMP_DIR)/.build
-	cd "$(TOPDIR)"; git log --no-show-signature --format=%h -1 toolchain > $(TMP_DIR)/.ver_check
-	cmp -s $(TMP_DIR)/.ver_check $@ || { \
+	revision="$$(cd "$(TOPDIR)" && git log --no-show-signature --format=%H -1 toolchain)"; \
+	[ -n "$$revision" ] || exit 1; \
+	[ "$$revision" = "$$(cat $@ 2>/dev/null)" ] || { \
 		rm -rf $(BUILD_DIR) $(STAGING_DIR) $(TOOLCHAIN_DIR) $(BUILD_DIR_TOOLCHAIN); \
 		mkdir -p $(TOOLCHAIN_DIR)/stamp; \
-		mv $(TMP_DIR)/.ver_check $@; \
-	}
+		printf '%s\n' "$$revision" > $@; \
+	}; \
+	touch $@
 
 $(TOOLCHAIN_DIR)/info.mk $(STAGING_DIR)/.prepared: $(TOOLCHAIN_DIR)/stamp/.ver_check
 endif
@@ -89,4 +91,3 @@ $(curdir)/install: $(curdir)/compile
 $(eval $(call stampfile,$(curdir),toolchain,compile,$(TOOLCHAIN_DIR)/stamp/.gcc_final_installed,,$(TOOLCHAIN_DIR)))
 $(eval $(call stampfile,$(curdir),toolchain,check,$(TMP_DIR)/.build))
 $(eval $(call subdir,$(curdir)))
-

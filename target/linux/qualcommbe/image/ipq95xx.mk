@@ -24,7 +24,6 @@ define Device/askey_sbe1v1k
 	DEVICE_ALT1_VENDOR := Spectrum
 	DEVICE_ALT1_MODEL := SBE1V1K
 	DEVICE_DTS_CONFIG := config@rtq7300t-rev0
-	KERNEL_LOADADDR := 0x42080000
 	SOC := ipq9570
 	DEVICE_PACKAGES := ath12k-firmware-qcn9274 f2fsck ipq-wifi-askey_sbe1v1k kmod-ath12k \
 		kmod-hwmon-pwmfan kmod-phy-realtek mkf2fs rtl826x-firmware
@@ -70,6 +69,18 @@ define Build/be7000-installer
 	bash $(TOPDIR)/package/boot/be7000-usb/package-installer.sh $@ $(1) $(SOURCE_DATE_EPOCH)
 endef
 
+define Build/be7000-sysupgrade-tar
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh sysupgrade $@
+endef
+
+define Build/be7000-sysupgrade
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh bundle $@ \
+		$(KDIR)/Image-initramfs $(KDIR)/vmlinux-initramfs.debug \
+		$(KDIR)/image-$(DEVICE_DTS).dtb $(IMAGE_ROOTFS) - \
+		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME) $(TARGET_DIR) $(TOPDIR)
+	$(call Build/be7000-sysupgrade-tar)
+endef
+
 define Device/xiaomi_be7000-common
 	$(call Device/FitImage)
 	DEVICE_VENDOR := Xiaomi
@@ -77,13 +88,14 @@ define Device/xiaomi_be7000-common
 	SUPPORTED_DEVICES := xiaomi,be7000
 	SOC := ipq9574
 	KERNEL_LOADADDR := 0x42000000
-	IMAGES := system.img userdata.img
+	IMAGES := $(if $(IB),sysupgrade.bin,system.img userdata.img sysupgrade.bin)
+	IMAGE/sysupgrade.bin := be7000-sysupgrade | append-metadata
 	IMAGE/system.img := append-rootfs | be7000-system
 	IMAGE/userdata.img := be7000-userdata
-	ARTIFACTS := usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz
+	ARTIFACTS := $(if $(IB),,usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz)
 	ARTIFACT/usb.tar.gz := be7000-usb-bundle
-	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-installer linux
-	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-installer windows
+	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-sysupgrade-tar | append-metadata | be7000-installer linux
+	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-sysupgrade-tar | append-metadata | be7000-installer windows
 endef
 
 define Device/xiaomi_be7000-native
@@ -92,7 +104,7 @@ define Device/xiaomi_be7000-native
 	DEVICE_DTS := ipq9574-be7000-native
 	DEVICE_PACKAGES := -uboot-envtools -kmod-qcom-ppe be7000-usb kmod-qcom-ppe-offload \
 		kmod-ath11k-ahb kmod-qcom-wcss-sec-compat ath11k-firmware-ipq9574 \
-		kmod-ath12k ath12k-firmware-qcn9274 be7000-ath-board
+		kmod-ath12k ath12k-firmware-qcn9274 be7000-ath-board luci-app-attendedsysupgrade
 endef
 TARGET_DEVICES += xiaomi_be7000-native
 

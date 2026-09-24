@@ -2,13 +2,25 @@
 
 **English** · [Русский](README.ru.md)
 
-OpenWrt **SNAPSHOT r36375+96-9a9dcac759** for Xiaomi BE7000, based on **Linux 6.18.52**. Boots from a USB drive using **kexec**. Wi-Fi uses the native ath11k/ath12k drivers.
+OpenWrt **SNAPSHOT r36538+77-18304dd747** for Xiaomi BE7000, based on **Linux 6.18.52**. Boots from a USB drive using **kexec**. Wi-Fi uses the native ath11k/ath12k drivers.
 
 Hardware acceleration (PPE offload) is supported for **PPPoE and Ethernet**.
 
 ![LuCI on BE7000](images/luci-overview.png)
 
 **[Download releases](https://github.com/Quarx2k/OpenWRT-BE7000/releases)** — Windows and Linux installers.
+
+## Updating
+
+Use **LuCI → System → Attended Sysupgrade** with the preconfigured server
+[openwrt.quarx2k.dev](https://openwrt.quarx2k.dev/) to build an update with your
+selected packages from the available repositories.
+
+The Windows/Linux installer also supports updating an existing USB installation,
+from stock firmware or running OpenWrt. Its update mode preserves settings, but
+uses the fixed package set in `firmware.bin`; additional installed packages are
+not carried over. Add custom files, such as hotplug scripts, to
+`/etc/sysupgrade.conf` to include them in the settings backup.
 
 ## Building from source
 
