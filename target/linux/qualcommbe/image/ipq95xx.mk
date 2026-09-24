@@ -69,12 +69,16 @@ define Build/be7000-installer
 	bash $(TOPDIR)/package/boot/be7000-usb/package-installer.sh $@ $(1) $(SOURCE_DATE_EPOCH)
 endef
 
+define Build/be7000-sysupgrade-tar
+	bash $(TOPDIR)/package/boot/be7000-usb/image.sh sysupgrade $@
+endef
+
 define Build/be7000-sysupgrade
 	bash $(TOPDIR)/package/boot/be7000-usb/image.sh bundle $@ \
 		$(KDIR)/Image-initramfs $(KDIR)/vmlinux-initramfs.debug \
 		$(KDIR)/image-$(DEVICE_DTS).dtb $(IMAGE_ROOTFS) - \
 		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME) $(TARGET_DIR) $(TOPDIR)
-	bash $(TOPDIR)/package/boot/be7000-usb/image.sh sysupgrade $@
+	$(call Build/be7000-sysupgrade-tar)
 endef
 
 define Device/xiaomi_be7000-common
@@ -90,8 +94,8 @@ define Device/xiaomi_be7000-common
 	IMAGE/userdata.img := be7000-userdata
 	ARTIFACTS := $(if $(IB),,usb.tar.gz installer-linux.tar.gz installer-windows.tar.gz)
 	ARTIFACT/usb.tar.gz := be7000-usb-bundle
-	ARTIFACT/installer-linux.tar.gz := be7000-sysupgrade | append-metadata | be7000-installer linux
-	ARTIFACT/installer-windows.tar.gz := be7000-sysupgrade | append-metadata | be7000-installer windows
+	ARTIFACT/installer-linux.tar.gz := be7000-usb-bundle | be7000-sysupgrade-tar | append-metadata | be7000-installer linux
+	ARTIFACT/installer-windows.tar.gz := be7000-usb-bundle | be7000-sysupgrade-tar | append-metadata | be7000-installer windows
 endef
 
 define Device/xiaomi_be7000-native
