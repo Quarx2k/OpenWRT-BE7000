@@ -16,9 +16,9 @@ if errorlevel 1 (
  echo Enter an IPv4 address.
  goto failed
 )
-set "SSH_OPTIONS=-o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlias=be7000-stock-%ROUTER_IP% -o StrictHostKeyChecking=accept-new"
+set "SSH_OPTIONS=-o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o GlobalKnownHostsFile=NUL"
 echo Enter the current root SSH password. It may be requested again for the installation menu.
-tar.exe -cf - installer firmware.bin | ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "set -e; echo 'Connected. Transferring firmware; please wait...'; mkdir /tmp/be7000-install.lock; trap 'rmdir /tmp/be7000-install.lock' EXIT; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; echo 'Transfer complete.'"
+tar.exe -cf - installer firmware.bin | ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "set -e; echo 'Connected. Transferring firmware; please wait...'; mkdir /tmp/be7000-install.lock; transferred=no; trap 'rmdir /tmp/be7000-install.lock; [ $transferred = yes ] || rm -f /tmp/be7000-installing' EXIT; trap 'exit 1' HUP INT TERM; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; transferred=yes; echo 'Transfer complete.'"
 if errorlevel 1 goto failed
 ssh.exe -t %SSH_OPTIONS% root@%ROUTER_IP% "sh /tmp/be7000-snapshot-install/installer/router-install.sh"
 if errorlevel 1 goto failed

@@ -12,8 +12,8 @@ test -s firmware.bin || { echo 'Place our BE7000 sysupgrade image here as firmwa
 command -v ssh >/dev/null
 command -v tar >/dev/null
 set -- -o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-    -o "HostKeyAlias=be7000-stock-$router" -o StrictHostKeyChecking=accept-new
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null
 echo 'Enter the current root SSH password. It may be requested again for the installation menu.'
 tar -cf - installer firmware.bin | ssh "$@" "root@$router" \
-    "set -e; echo 'Connected. Transferring firmware; please wait...'; mkdir /tmp/be7000-install.lock; trap 'rmdir /tmp/be7000-install.lock' EXIT; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; echo 'Transfer complete.'"
+    "set -e; echo 'Connected. Transferring firmware; please wait...'; mkdir /tmp/be7000-install.lock; transferred=no; trap 'rmdir /tmp/be7000-install.lock; [ \"\$transferred\" = yes ] || rm -f /tmp/be7000-installing' EXIT; trap 'exit 1' HUP INT TERM; touch /tmp/be7000-installing; mkdir -p /tmp/be7000-snapshot-install; tar -xf - -C /tmp/be7000-snapshot-install; transferred=yes; echo 'Transfer complete.'"
 ssh -t "$@" "root@$router" 'sh /tmp/be7000-snapshot-install/installer/router-install.sh'

@@ -3,6 +3,11 @@
 set -eu
 umask 022
 fail() { echo "ERROR: $*" >&2; exit 1; }
+read_choice() {
+    choice=
+    read -r choice || [ -n "$choice" ] ||
+        fail 'Input closed before an answer was received. Run the installer in an interactive terminal.'
+}
 here=$(CDPATH= cd "$(dirname "$0")" && pwd)
 image=$here/../firmware.bin
 helper=$here/be7000-usb-upgrade
@@ -23,6 +28,7 @@ cleanup() {
     rm -f /tmp/be7000-installing
 }
 trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 case "$(uname -r)" in
     6.18.*)
@@ -65,19 +71,19 @@ if [ -s "$base/system.img" ] && [ -s "$base/userdata.img" ]; then
     echo '  2 - Install from scratch: erase OpenWrt settings and installed packages'
     echo '  0 - Cancel'
     printf 'Choose [1/2/0]: '
-    read -r choice
+    read_choice
     case "${choice:-1}" in 1) mode=update;; 2) mode=fresh;; 0) exit 0;; *) fail 'Invalid choice';; esac
 else
     [ "$system" = stock ] || fail 'The running USB installation is incomplete.'
     [ ! -e "$base/system.img" ] && [ ! -e "$base/userdata.img" ] || fail 'Incomplete existing installation; no files changed.'
     printf 'No installation found. Install OpenWrt on USB? [Y/n]: '
-    read -r choice
+    read_choice
     case "$choice" in ''|y|Y|yes|YES) mode=fresh;; *) exit 0;; esac
 fi
 
 if [ "$system" = stock ]; then
     printf 'Start OpenWrt automatically after reboot? [Y/n]: '
-    read -r choice
+    read_choice
     case "$choice" in ''|y|Y|yes|YES) auto=yes;; n|N|no|NO) auto=no;; *) fail 'Invalid choice';; esac
     sh "$here/stock-install.sh" "$mode" "$auto" "$dev" "$usb"
     scheduled=yes

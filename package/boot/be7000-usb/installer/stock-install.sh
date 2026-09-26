@@ -12,7 +12,8 @@ work=$usb/.be7000-snapshot-install
 fail() { echo "ERROR: $*" >&2; exit 1; }
 case "$mode:$auto" in update:yes|update:no|fresh:yes|fresh:no) ;; *) fail 'Invalid installation mode';; esac
 case "$usb" in /mnt/usb-*) ;; *) fail 'Invalid stock USB mount';; esac
-[ "$(readlink -f "$base")" = "$base" ] || fail 'Redirected installation directory.'
+[ "$(readlink -f "$usb")" = "$usb" ] && [ ! -L "$base" ] || fail 'Redirected installation directory.'
+[ ! -e "$base" ] || [ -d "$base" ] || fail 'Installation path is not a directory.'
 case "$(cat /tmp/be7000-kexec-quiesce.phase 2>/dev/null || :)" in
     quiescing|transition|failed:*) fail 'Restart stock before another installation.';;
 esac
@@ -51,6 +52,7 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 mount_at() {
     point=$1; shift
     mount "$@" "$point"
