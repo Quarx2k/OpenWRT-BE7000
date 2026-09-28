@@ -37,7 +37,7 @@ if [ -f "$BASE_DIR/wifi-mode-supported" ]; then
 	case "$WIFI_MODE" in dual) ;; *) WIFI_MODE=single;; esac
 	[ -s "$BASE_DIR/../payload/wifi-$WIFI_MODE.dtb" ] || exit 1
 	ln -s "wifi-$WIFI_MODE.dtb" "$BASE_DIR/../payload/.wifi-dtb.$$"
-	mv -Tf "$BASE_DIR/../payload/.wifi-dtb.$$" "$BASE_DIR/../payload/be7000-spin-table.dtb"
+	mv -f "$BASE_DIR/../payload/.wifi-dtb.$$" "$BASE_DIR/../payload/be7000-spin-table.dtb"
 	DTB_BYTES=$(wc -c < "$DTB_TEMPLATE")
 	[ "$DTB_BYTES" -ge 4096 ] && [ "$DTB_BYTES" -le 2097152 ] || exit 1
 fi
