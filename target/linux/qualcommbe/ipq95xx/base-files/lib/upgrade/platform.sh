@@ -1,7 +1,7 @@
 PART_NAME=firmware
 REQUIRE_IMAGE_METADATA=1
 
-RAMFS_COPY_BIN='fw_printenv fw_setenv head blkid jsonfilter readlink ln'
+RAMFS_COPY_BIN='fw_printenv fw_setenv head cmp sha256sum tr mktemp blkid jsonfilter readlink ln'
 RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock /usr/libexec/be7000-usb-upgrade'
 
 platform_check_image() {
@@ -10,8 +10,17 @@ platform_check_image() {
 		/usr/libexec/be7000-usb-upgrade check "$1"
 		return $?
 		;;
+	linksys,ln6001)
+		ln6001_preflight "$1" || {
+			echo "LN6001 A/B preflight failed" >&2
+			return 1
+		}
+		return 0
+		;;
+	*)
+		return 0
+		;;
 	esac
-	return 0;
 }
 
 platform_pre_upgrade() {
@@ -42,6 +51,9 @@ platform_do_upgrade() {
 		CI_ROOTPART="rootfs"
 		CI_DATAPART="rootfs_data"
 		emmc_do_upgrade "$1"
+		;;
+	linksys,ln6001)
+		ln6001_do_upgrade "$1" || return 1
 		;;
 	*)
 		default_do_upgrade "$1"

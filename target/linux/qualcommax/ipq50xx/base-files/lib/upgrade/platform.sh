@@ -181,6 +181,7 @@ platform_do_upgrade() {
 	case "$(board_name)" in
 	cmcc,mr3000d-ci|\
 	cmcc,pz-l8|\
+	cmcc,rax3000q|\
 	elecom,wrc-x3000gs2|\
 	elecom,wrc-x3000gst2|\
 	iodata,wn-dax3000gr)
@@ -213,7 +214,8 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume ubi_rootfs
 		nand_do_upgrade "$1"
 		;;
-	tplink,archer-ax55-v1)
+	tplink,archer-ax55-v1|\
+	tplink,eap650-outdoor-v1)
 		# Dual boot: install into the inactive rootfs/rootfs_1 slot,
 		# then point tp_boot_idx at it. The running slot is left
 		# untouched as a fallback - if the new image fails to load,

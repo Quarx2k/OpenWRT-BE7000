@@ -49,6 +49,20 @@ define Device/cmcc_pz-l8
 endef
 TARGET_DEVICES += cmcc_pz-l8
 
+define Device/cmcc_rax3000q
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := CMCC
+	DEVICE_MODEL := RAX3000Q
+	DEVICE_DTS_CONFIG := config@mp02.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 59392k
+	NAND_SIZE := 128m
+endef
+TARGET_DEVICES += cmcc_rax3000q
+
 define Device/elecom_wrc-x3000gs2
 	$(call Device/FitImageLzma)
 	DEVICE_VENDOR := ELECOM
@@ -225,6 +239,25 @@ endif
 endif
 endef
 TARGET_DEVICES += tplink_archer-ax55-v1
+
+define Device/tplink_eap650-outdoor-v1
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := TP-Link
+	DEVICE_MODEL := EAP650-Outdoor
+	DEVICE_VARIANT := v1
+	DEVICE_DTS_CONFIG := config@mp03.1
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	SOC := ipq5018
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+		kmod-ath11k-pci \
+		ath11k-firmware-qcn9074 \
+		ipq-wifi-tplink_eap650-outdoor-v1 \
+		kmod-phy-realtek
+endef
+TARGET_DEVICES += tplink_eap650-outdoor-v1
 
 define Device/xiaomi_ipq50xx_ax_base
 	$(call Device/FitImage)
