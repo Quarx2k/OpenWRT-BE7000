@@ -30,7 +30,7 @@ DTB_BYTES=@DTB_BYTES@
 if [ -f "$BASE_DIR/wifi-mode-supported" ]; then
 	be7000_kernel_profile || exit 1
 	WIFI_DATA=$(mktemp -d /tmp/be7000-wifi-mode.XXXXXX)
-	mount -t ext4 -o loop,ro "$BASE_DIR/../userdata.img" "$WIFI_DATA" || { rmdir "$WIFI_DATA"; exit 1; }
+	mount -t ext4 -o loop,ro,noload "$BASE_DIR/../userdata.img" "$WIFI_DATA" || { rmdir "$WIFI_DATA"; exit 1; }
 	WIFI_MODE=$(uci -q -c "$WIFI_DATA/upper/etc/config" get be7000_wifi.settings.mode || true)
 	umount "$WIFI_DATA" || exit 1
 	rmdir "$WIFI_DATA"
