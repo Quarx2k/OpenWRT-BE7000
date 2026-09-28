@@ -1,0 +1,7 @@
+{
+	"luci-app-be7000-nfc": {
+		"description": "Configure NFC Wi-Fi sharing",
+		"read": { "ubus": { "be7000.nfc": [ "status" ] } },
+		"write": { "ubus": { "be7000.nfc": [ "set" ] } }
+	}
+}

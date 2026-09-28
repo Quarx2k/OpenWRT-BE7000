@@ -1,0 +1,8 @@
+{
+	"admin/network/be7000-nfc": {
+		"title": "NFC",
+		"order": 17,
+		"action": { "type": "view", "path": "network/be7000-nfc" },
+		"depends": { "acl": [ "luci-app-be7000-nfc" ] }
+	}
+}

@@ -12,6 +12,7 @@
 	soc_version_major = [01 00 00 00];
 	soc_version_minor = [01 00 00 00];
 	aliases {
+		i2c0 = &blsp1_i2c1;
 		led-boot = &led_sys_orange;
 		led-failsafe = &led_sys_orange;
 		led-running = &led_sys_white;
@@ -162,8 +163,21 @@
 };
 &usb3 { status = "okay"; };
 
+&blsp1_i2c1 {
+	clock-frequency = <400000>;
+	pinctrl-0 = <&nfc_i2c_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
 /* RAM/USB build: neither NAND nor SPI flash is exposed. */
 &tlmm {
+	nfc_i2c_pins: nfc-i2c-state {
+		pins = "gpio36", "gpio37";
+		function = "blsp1_i2c";
+		drive-strength = <8>;
+		bias-disable;
+	};
 	leds_pins: leds-state {
 		pins = "gpio8", "gpio40", "gpio41", "gpio42", "gpio43";
 		function = "gpio";

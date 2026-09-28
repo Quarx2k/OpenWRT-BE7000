@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+USE_PROCD=1
+
+start_service() {
+	[ "$(uci -q get be7000_nfc.settings.enabled)" = 1 ] || return 0
+	/usr/libexec/be7000-nfc sync || logger -t be7000-nfc 'NFC update failed'
+}
+
+reload_service() {
+	start_service
+}
+
+service_triggers() {
+	procd_add_reload_trigger wireless be7000_nfc
+}
