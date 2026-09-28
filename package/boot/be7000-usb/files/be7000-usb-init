@@ -75,10 +75,9 @@ for attempt in {1..30}; do
 	for block in /sys/class/block/sd*; do
 		[[ -e $block ]] || continue
 		dev=/dev/${block##*/}
-		if [[ ! -b $dev ]]; then
-			IFS=: read -r major minor <"$block/dev"
-			mknod -m 600 "$dev" b "$major" "$minor"
-		fi
+		{ IFS=: read -r major minor <"$block/dev"; } 2>/dev/null || continue
+		rm -f "$dev" || continue
+		mknod -m 600 "$dev" b "$major" "$minor" || continue
 		if [[ -n $usb_uuid ]]; then
 			[[ $(blkid -s UUID -o value "$dev" 2>/dev/null || true) == "$usb_uuid" ]] || continue
 		fi

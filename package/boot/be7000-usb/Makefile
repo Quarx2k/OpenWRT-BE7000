@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=be7000-usb
-PKG_RELEASE:=18
+PKG_RELEASE:=19
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/package.mk
@@ -10,7 +10,7 @@ define Package/be7000-usb
   SECTION:=base
   CATEGORY:=Base system
   TITLE:=Xiaomi BE7000 USB root and kexec handoff support
-  DEPENDS:=@TARGET_qualcommbe_ipq95xx +bash +e2fsprogs +blkid +losetup +kmod-usb-storage +kmod-fs-ext4 +kmod-fs-vfat +kmod-usb3 +kmod-usb-dwc3 +kmod-usb-dwc3-qcom
+  DEPENDS:=@TARGET_qualcommbe_ipq95xx +bash +e2fsprogs +blkid +losetup +kmod-usb-storage +kmod-usb-storage-uas +kmod-fs-ext4 +kmod-fs-vfat +kmod-usb3 +kmod-usb-dwc3 +kmod-usb-dwc3-qcom
 endef
 
 define Build/Compile
