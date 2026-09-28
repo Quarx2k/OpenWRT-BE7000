@@ -17,6 +17,7 @@ else
 	: > "$TMP_LOG"
 fi
 cd /tmp || exit 1
+exec </dev/null >> "$TMP_LOG" 2>&1
 
 log()
 {
@@ -258,20 +259,24 @@ abort_to_stock()
 	while :; do sleep 60; done
 }
 
-log "stage 2 armed; cancellation window started"
-for LEFT in 10 9 8 7 6 5 4 3 2 1; do
-	echo "countdown:$LEFT" > "$PHASE_FILE"
-	sleep 1
+log "stage 2 armed; waiting for launcher to exit"
+while [ -n "${6:-}" ] && kill -0 "$6" 2>/dev/null; do
+	sleep 0.1
 done
 
 trap '' TERM INT
 echo "quiescing" > "$PHASE_FILE"
 log "quiescing started"
+if [ -x /etc/init.d/indexservice.init ]; then
+	log "stopping USB index service"
+	/usr/bin/timeout -t 20 /etc/init.d/indexservice.init stop >> "$TMP_LOG" 2>&1 ||
+		abort_to_stock "USB index service stop failed"
+fi
 
 # High-I/O and event-generating user services. Autostart settings are untouched.
 for SERVICE in \
 	messagingagent.sh miwifi-discovery cab_meshd miwifi-roam \
-	trafficd indexservice.init datacenter smartcontroller baidupan \
+	trafficd datacenter smartcontroller baidupan \
 	filetunnel stunserver topomon pluginmanager xq_info_sync_mqtt \
 	mobile_accel miqos miot mosquitto tbusd netapi wan_check iweventd \
 	miniupnpd samba afpd nginx cron telnet dnsmasq odhcpd rpcd cnss_diag

@@ -258,25 +258,18 @@ fi
 	echo "kexec_loaded: $(cat /sys/kernel/kexec_loaded)"
 	echo "usb_mount: $USB_MOUNT"
 	echo "persistent_log: $PERSIST_LOG"
-	echo "action: 10-second cancel window, service/WLAN/remoteproc quiesce, reverse-order module unload with EIP/PPE/SSDK retained, USB detach, sync, read-only remount, device/PCI shutdown, serialize RPM GLINK, park CPU1-3 in the physical spin-table pen, then kexec"
+	echo "action: service/WLAN/remoteproc quiesce, reverse-order module unload with EIP/PPE/SSDK retained, USB detach, sync, read-only remount, device/PCI shutdown, serialize RPM GLINK, park CPU1-3 in the physical spin-table pen, then kexec"
 	echo "purgatory_checks: disabled for this diagnostic run"
 	echo "watchdog_before: $(echo "$WATCHDOG_STATE" | tr '\n' ' ')"
 } > "$ARM_LOG"
 cp "$ARM_LOG" "$PERSIST_LOG"
 sync
 
-echo "countdown" > "$PHASE_FILE"
+echo "quiescing" > "$PHASE_FILE"
 /sbin/start-stop-daemon -S -b -m -p "$PID_FILE" -x "$BASH_RUNTIME/lib/ld-musl-aarch64.so.1" -- --library-path "$BASH_RUNTIME/lib" "$BASH_RUNTIME/bin/bash" "$TMP_STAGE2" \
-	"$TMP_KEXEC" "$PERSIST_LOG" "$USB_MOUNT" "$PHASE_FILE" "$PID_FILE"
+	"$TMP_KEXEC" "$PERSIST_LOG" "$USB_MOUNT" "$PHASE_FILE" "$PID_FILE" "$$"
 ARMED=1
 
-sleep 1
-[ -r "$PID_FILE" ] || die "transition worker did not create its PID file"
-WORKER_PID=$(cat "$PID_FILE")
-kill -0 "$WORKER_PID" 2>/dev/null || die "transition worker exited early"
-
-echo "Quiesced kexec worker armed as PID $WORKER_PID."
-echo "There is a 10-second cancellation window before services are stopped."
-echo "Cancel during that window with: $BASE_DIR/03-cancel.sh"
+echo "Hardware teardown and kexec worker started."
 echo "After the phase changes to 'quiescing', do not interrupt power manually."
 echo "Persistent progress log: $PERSIST_LOG"
