@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+#include "ipq9574-be7000-native.dts"
+
+/ {
+	reserved-memory {
+		/delete-node/ qcn9224-pcie2@54100000;
+		/delete-node/ m3@55d00000;
+		/delete-node/ etr@55e00000;
+		/delete-node/ caldb@55f00000;
+		/delete-node/ pageable@56700000;
+	};
+};
+
+&wifi5 {
+	qcom,board_id = <0x1008>;
+	qcom,num-radios = <2>;
+	/delete-property/ memory-region;
+	/delete-property/ memory-region-names;
+};
+
+&tlmm {
+	rf-low-hog {
+		/delete-property/ output-low;
+		output-high;
+		line-name = "wifi-split-phy-low";
+	};
+	rf-high-hog {
+		/delete-property/ output-high;
+		output-low;
+		line-name = "wifi-split-phy-high";
+	};
+};

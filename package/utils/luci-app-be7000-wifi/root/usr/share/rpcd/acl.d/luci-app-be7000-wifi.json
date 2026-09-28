@@ -1,0 +1,13 @@
+{
+	"luci-app-be7000-wifi": {
+		"description": "Configure the BE7000 5 GHz radio mode",
+		"read": { "ubus": { "be7000.wifi": [ "status", "overview" ] } },
+		"write": { "ubus": { "be7000.wifi": [ "set" ], "system": [ "reboot" ] } }
+	},
+	"luci-mod-status-index-wifi": {
+		"read": { "ubus": { "be7000.wifi": [ "overview" ] } }
+	},
+	"luci-mod-network-config": {
+		"read": { "ubus": { "be7000.wifi": [ "overview" ] } }
+	}
+}

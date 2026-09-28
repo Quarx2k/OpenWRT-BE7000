@@ -33,6 +33,7 @@ cd OpenWRT-BE7000
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
+bash package/utils/luci-app-be7000-wifi/prepare-luci.sh .
 
 cp config.be7000-native .config
 make defconfig

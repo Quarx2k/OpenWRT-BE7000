@@ -1,0 +1,7 @@
+#!/bin/sh /etc/rc.common
+
+START=19
+
+boot() {
+	/usr/libexec/be7000-wifi boot || logger -t be7000-wifi 'Could not prepare the 5 GHz radio configuration'
+}

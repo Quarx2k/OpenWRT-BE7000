@@ -1,0 +1,349 @@
+#!/bin/bash
+
+set -e
+. /usr/share/libubox/jshn.sh
+
+changes=$(mktemp -d /tmp/be7000-wifi.XXXXXX)
+trap 'rm -rf -- "$changes"' EXIT
+u() { uci -q -t "$changes" "$@"; }
+get() { u get "$1" || true; }
+fail() { json_init; json_add_string error "$1"; json_dump; exit 1; }
+
+base=
+for arg in $(cat /proc/cmdline); do
+	case "$arg" in be7000_usb_dir=*) base=/mnt/usb/${arg#*=};; esac
+done
+available=0
+if [[ $(cat /tmp/sysinfo/board_name) == xiaomi,be7000 && -n $base &&
+	-s $base/payload/wifi-single.dtb && -s $base/payload/wifi-dual.dtb &&
+	-f $base/boot/wifi-mode-supported ]]; then
+	available=1
+fi
+radio_count=/sys/bus/pci/devices/0002:01:00.0/of_node/qcom,num-radios
+case $(hexdump -v -e '1/1 "%02x"' "$radio_count" 2>/dev/null) in
+	00000001) current=single;;
+	00000002) current=dual;;
+	*) current=unknown; available=0;;
+esac
+selected=$(get be7000_wifi.settings.mode)
+[[ $selected == dual ]] || selected=single
+mlo=0
+[[ $selected == dual && $(get be7000_wifi.settings.mlo) == 1 ]] && mlo=1
+current_mlo=0
+[[ $current == dual && $(get be7000_wifi.settings.applied_mlo) == 1 ]] && current_mlo=1
+
+find_radio() {
+	local section
+	for section in $(u show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+		[[ $section != radio2 && $section != be7000_5gh && $(get wireless.$section.band) == 5g ]] || continue
+		[[ $(get wireless.$section.path) == *20000000* ]] || continue
+		radio=$section
+		break
+	done
+	[[ -n $radio ]] || return 1
+	for section in $(u show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+		[[ $(get wireless.$section.device) == "$radio" && $(get wireless.$section.mode) == ap ]] || continue
+		iface=$section
+		break
+	done
+	[[ -n $iface ]]
+}
+
+status() {
+	json_init
+	json_add_boolean available "$available"
+	json_add_string current "$current"
+	json_add_string selected "$selected"
+	json_add_boolean mlo "$mlo"
+	json_add_boolean current_mlo "$current_mlo"
+	json_add_boolean pending "$([[ $current != "$selected" || $current_mlo != "$mlo" ]] && echo 1 || echo 0)"
+	if find_radio; then
+		json_add_string primary_ssid "$(get wireless.$iface.ssid)"
+		json_add_string secondary_ssid "$(u get wireless.default_radio2.ssid || get wireless.be7000_5gh_ap.ssid)"
+	fi
+	json_dump
+}
+
+overview() {
+	local section device ifname line link_open=0
+	local link_re='link ID +([0-9]+) link addr ([[:xdigit:]:]+)'
+	local channel_re='channel ([0-9]+) \(([0-9]+) MHz\), width: ([0-9]+) MHz'
+	local power_re='txpower ([0-9.]+) dBm'
+	json_init
+	find_radio || { json_dump; return; }
+	json_add_array hidden_networks
+	for section in be7000_mlo default_radio2 be7000_5gh_ap "$iface"; do
+		[[ $section != be7000_mlo || $current_mlo != 1 ]] || continue
+		device=$(get wireless.$section.device)
+		if [[ $current == single && $section != be7000_mlo && $section != "$iface" &&
+			$(get wireless.$device.disabled) == 1 ]]; then
+			json_add_string '' "$section"
+			continue
+		fi
+		[[ $(get wireless.$section.disabled) == 1 ]] || continue
+		if [[ $section == be7000_mlo || $current_mlo == 1 ||
+			$current == single && $section != "$iface" ]]; then
+			json_add_string '' "$section"
+		fi
+	done
+	json_close_array
+	json_add_array hidden_radios
+	if [[ $current == single ]]; then
+		for device in radio2 be7000_5gh; do
+			[[ $(get wireless.$device.disabled) != 1 ]] || json_add_string '' "$device"
+		done
+	fi
+	json_close_array
+	if [[ $current_mlo == 1 && -n $(get wireless.be7000_mlo) ]]; then
+		json_add_object mlo
+		json_add_string section be7000_mlo
+		json_add_array devices
+		for device in $(get wireless.be7000_mlo.device); do
+			json_add_string '' "$device"
+		done
+		json_close_array
+		ifname=$(ubus -S call network.wireless status |
+			jsonfilter -e '@.*.interfaces[@.section="be7000_mlo"].ifname' | head -n 1)
+		json_add_array links
+		while IFS= read -r line; do
+			if [[ $line =~ $link_re ]]; then
+				(( ! link_open )) || json_close_object
+				json_add_object ''
+				link_open=1
+				json_add_int id "${BASH_REMATCH[1]}"
+				json_add_string address "${BASH_REMATCH[2]}"
+			elif (( link_open )) && [[ $line =~ $channel_re ]]; then
+				json_add_int channel "${BASH_REMATCH[1]}"
+				json_add_int frequency "${BASH_REMATCH[2]}"
+				json_add_int width "${BASH_REMATCH[3]}"
+			elif (( link_open )) && [[ $line =~ $power_re ]]; then
+				json_add_string txpower "${BASH_REMATCH[1]}"
+			fi
+		done < <([[ -z $ifname ]] || iw dev "$ifname" info 2>/dev/null)
+		(( ! link_open )) || json_close_object
+		json_close_array
+		json_close_object
+	fi
+	json_dump
+}
+
+validate_mlo() {
+	local key source=$iface
+	[[ -z $(get wireless.be7000_mlo) ]] || source=be7000_mlo
+	case $(get wireless.$source.encryption) in psk2*|sae*) ;; *) fail mlo_security;; esac
+	key=$(get wireless.$source.key)
+	(( ${#key} >= 8 && ${#key} <= 63 )) || fail mlo_security
+}
+
+remember_option() {
+	u set "be7000_wifi.settings.mlo_$1=$(get wireless.$2)"
+}
+
+restore_option() {
+	local value
+	value=$(get be7000_wifi.settings.mlo_$1)
+	if [[ -n $value ]]; then
+		u set "wireless.$2=$value"
+	else
+		u delete "wireless.$2" || true
+	fi
+}
+
+rename_secondary() {
+	local section device devices
+	if [[ -n $(get wireless.be7000_5gh) ]]; then
+		[[ -z $(get wireless.radio2) ]] || fail radio_conflict
+	fi
+	if [[ -n $(get wireless.be7000_5gh_ap) ]]; then
+		[[ -z $(get wireless.default_radio2) ]] || fail radio_conflict
+	fi
+	if [[ -n $(get wireless.be7000_5gh) ]]; then
+		u rename wireless.be7000_5gh=radio2
+		for section in $(u show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+			devices=$(get wireless.$section.device)
+			if [[ $devices == be7000_5gh ]]; then
+				u set "wireless.$section.device=radio2"
+			elif [[ " $devices " == *" be7000_5gh "* ]]; then
+				u delete "wireless.$section.device"
+				for device in $devices; do
+					[[ $device != be7000_5gh ]] || device=radio2
+					u add_list "wireless.$section.device=$device"
+				done
+			fi
+		done
+	fi
+	[[ -z $(get wireless.be7000_5gh_ap) ]] || u rename wireless.be7000_5gh_ap=default_radio2
+}
+
+prepare_wireless() {
+	local option value channel width wanted_mlo=0
+	rename_secondary
+	find_radio || fail no_radio
+	if [[ $current == dual && $mlo == 1 ]]; then
+		wanted_mlo=1
+		validate_mlo
+	elif [[ $(get be7000_wifi.settings.applied_mlo) == 1 ]]; then
+		for option in channel htmode noscan; do
+			remember_option low_$option "$radio.$option"
+			remember_option high_$option "radio2.$option"
+		done
+		restore_option primary_disabled "$iface.disabled"
+		restore_option secondary_disabled default_radio2.disabled
+		for option in channel htmode noscan; do
+			restore_option primary_$option "$radio.$option"
+			restore_option secondary_$option "radio2.$option"
+		done
+		[[ -z $(get wireless.be7000_mlo) ]] || u set wireless.be7000_mlo.disabled=1
+	fi
+	if [[ -z $(get be7000_wifi.settings.single_htmode) ]]; then
+		u set "be7000_wifi.settings.single_htmode=$(get wireless.$radio.htmode)"
+		u set "be7000_wifi.settings.single_channel=$(get wireless.$radio.channel)"
+		u set "be7000_wifi.settings.single_noscan=$(get wireless.$radio.noscan)"
+	fi
+	if [[ $current == dual ]]; then
+		if [[ -z $(get wireless.radio2) ]]; then
+			u set wireless.radio2=wifi-device
+			for option in type path band country txpower; do
+				value=$(get wireless.$radio.$option)
+				[[ -z $value ]] || u set "wireless.radio2.$option=$value"
+			done
+			u set wireless.radio2.radio=1
+			u set wireless.radio2.channel=149
+			u set wireless.radio2.htmode=EHT80
+			u set wireless.radio2.noscan=1
+		fi
+		if [[ -z $(get wireless.default_radio2) ]]; then
+			u set wireless.default_radio2=wifi-iface
+			for option in mode network encryption key ieee80211w sae_pwe sae_ext_key gcmp256 isolate hidden; do
+				value=$(get wireless.$iface.$option)
+				[[ -z $value ]] || u set "wireless.default_radio2.$option=$value"
+			done
+			u set wireless.default_radio2.device=radio2
+			u set "wireless.default_radio2.ssid=$(get wireless.$iface.ssid | cut -c 1-27)_High"
+		fi
+		u set wireless.radio2.disabled=0
+		u set wireless.$radio.radio=0
+		if [[ $(get be7000_wifi.settings.applied) != dual ]]; then
+			channel=$(get be7000_wifi.settings.dual_channel)
+			width=$(get be7000_wifi.settings.dual_htmode)
+			u set "wireless.$radio.channel=${channel:-36}"
+			u set "wireless.$radio.htmode=${width:-EHT80}"
+			value=$(get be7000_wifi.settings.dual_noscan)
+			[[ -n $width ]] || value=1
+			if [[ -n $value ]]; then
+				u set "wireless.$radio.noscan=$value"
+			else
+				u delete wireless.$radio.noscan || true
+			fi
+		fi
+	else
+		[[ -z $(get wireless.radio2) ]] || u set wireless.radio2.disabled=1
+		u delete wireless.$radio.radio || true
+		if [[ $(get be7000_wifi.settings.applied) == dual ]]; then
+			for option in channel htmode noscan; do
+				u set "be7000_wifi.settings.dual_$option=$(get wireless.$radio.$option)"
+			done
+			channel=$(get be7000_wifi.settings.single_channel)
+			width=$(get be7000_wifi.settings.single_htmode)
+			u set "wireless.$radio.channel=${channel:-36}"
+			u set "wireless.$radio.htmode=${width:-EHT160}"
+			value=$(get be7000_wifi.settings.single_noscan)
+			if [[ -n $value ]]; then
+				u set "wireless.$radio.noscan=$value"
+			else
+				u delete wireless.$radio.noscan || true
+			fi
+		fi
+	fi
+	if (( wanted_mlo )); then
+		if [[ $(get be7000_wifi.settings.applied_mlo) != 1 ]]; then
+			remember_option primary_disabled "$iface.disabled"
+			remember_option secondary_disabled default_radio2.disabled
+			for option in channel htmode noscan; do
+				remember_option primary_$option "$radio.$option"
+				remember_option secondary_$option "radio2.$option"
+			done
+			channel=$(get be7000_wifi.settings.mlo_low_channel)
+			u set "wireless.$radio.channel=${channel:-36}"
+			channel=$(get be7000_wifi.settings.mlo_high_channel)
+			u set "wireless.radio2.channel=${channel:-149}"
+			width=$(get be7000_wifi.settings.mlo_low_htmode)
+			u set "wireless.$radio.htmode=${width:-EHT80}"
+			if [[ -n $width ]]; then
+				restore_option low_noscan "$radio.noscan"
+			else
+				u set wireless.$radio.noscan=1
+			fi
+			width=$(get be7000_wifi.settings.mlo_high_htmode)
+			u set "wireless.radio2.htmode=${width:-EHT80}"
+			if [[ -n $width ]]; then
+				restore_option high_noscan radio2.noscan
+			else
+				u set wireless.radio2.noscan=1
+			fi
+		fi
+		for option in "$radio" radio2; do
+			case $(get wireless.$option.htmode) in
+				EHT20|EHT40|EHT80) ;;
+				*) u set wireless.$option.htmode=EHT80;;
+			esac
+		done
+		u set wireless.$iface.disabled=1
+		u set wireless.default_radio2.disabled=1
+		if [[ -z $(get wireless.be7000_mlo) ]]; then
+			u set wireless.be7000_mlo=wifi-iface
+			for option in ssid network key isolate hidden; do
+				value=$(get wireless.$iface.$option)
+				[[ -z $value ]] || u set "wireless.be7000_mlo.$option=$value"
+			done
+		fi
+		u delete wireless.be7000_mlo.device || true
+		u add_list wireless.be7000_mlo.device="$radio"
+		u add_list wireless.be7000_mlo.device=radio2
+		u set wireless.be7000_mlo.mode=ap
+		u set wireless.be7000_mlo.mlo=1
+		u set wireless.be7000_mlo.disabled=0
+		u set wireless.be7000_mlo.encryption=sae
+		u set wireless.be7000_mlo.ieee80211w=2
+		u set wireless.be7000_mlo.sae_pwe=1
+		u set wireless.be7000_mlo.sae_ext_key=1
+		u set wireless.be7000_mlo.gcmp256=1
+	fi
+	u set be7000_wifi.settings.applied="$current"
+	u set be7000_wifi.settings.applied_mlo="$wanted_mlo"
+	u commit wireless
+	u commit be7000_wifi
+}
+
+case "${1:-}" in
+	status) status; exit 0;;
+	overview) overview; exit 0;;
+	set|boot) (( available )) || fail unavailable;;
+	*) exit 1;;
+esac
+exec 9>/var/lock/be7000-wifi.lock
+flock -n 9 || fail busy
+case "$1" in
+	set)
+		[[ ${2:-} == single || ${2:-} == dual ]] || fail bad_mode
+		[[ ${3:-0} == 0 || ${3:-0} == 1 ]] || fail bad_mode
+		find_radio || fail no_radio
+		mlo=${3:-0}
+		[[ $2 == dual ]] || mlo=0
+		(( ! mlo )) || validate_mlo
+		if [[ $current == single && $2 == dual ]]; then
+			u set "be7000_wifi.settings.single_channel=$(get wireless.$radio.channel)"
+			u set "be7000_wifi.settings.single_htmode=$(get wireless.$radio.htmode)"
+			u set "be7000_wifi.settings.single_noscan=$(get wireless.$radio.noscan)"
+		fi
+		u set be7000_wifi.settings.mode="$2"
+		u set be7000_wifi.settings.mlo="$mlo"
+		ln -s "wifi-$2.dtb" "$base/payload/.wifi-dtb.$$"
+		mv -Tf "$base/payload/.wifi-dtb.$$" "$base/payload/be7000-spin-table.dtb"
+		u commit be7000_wifi
+		sync
+		selected=$2
+		status
+		;;
+	boot) prepare_wireless;;
+esac

@@ -1,0 +1,124 @@
+From: Nickolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] luci-mod-status: group BE7000 MLO links and hide saved profiles
+
+Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
+---
+--- a/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/60_wifi.js
++++ b/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/60_wifi.js
+@@ -10,6 +10,12 @@
+ return baseclass.extend({
+ 	title: _('Wireless'),
+ 
++	callWifiOverview: rpc.declare({
++		object: 'be7000.wifi',
++		method: 'overview',
++		expect: { '': {} }
++	}),
++
+ 	WPSTranslateTbl: {
+ 		Disabled: _('Disabled'),
+ 		Active: _('Active'),
+@@ -103,7 +109,7 @@
+ 		})();
+ 	},
+ 
+-	renderbox(radio, networks) {
++	renderbox(radio, networks, mlo) {
+ 		let chan = null;
+ 		let freq = null;
+ 		let rate = null;
+@@ -112,6 +118,7 @@
+ 		let tx_power = null;
+ 		const badges = [];
+ 
++		networks = networks.slice().sort((a, b) => Number(a.isDisabled()) - Number(b.isDisabled()));
+ 		for (let i = 0; i < networks.length; i++) {
+ 			const net = networks[i];
+ 			const is_assoc = (net.getBSSID() != '00:00:00:00:00:00' && net.getChannel() && !net.isDisabled());
+@@ -172,16 +179,23 @@
+ 
+ 		return E('div', { class: 'ifacebox' }, [
+ 			E('div', { class: 'ifacebox-head center ' + (radio.isUp() ? 'active' : '') },
+-				E('strong', radio.getName())),
++				E('strong', mlo ? mlo.devices.join(' + ') + ' · MLO' : radio.getName())),
+ 			E('div', { class: 'ifacebox-body left' }, [
+ 				L.itemlist(E('span'), [
+ 					_('Type'), radio.getI18n().replace(/^Generic | Wireless Controller .+$/g, ''),
+-					_('Bitrate'), rate ? '%d %s'.format(rate, _('Mbit/s')) : null,
+-					_('Channel'), chan ? '%d (%.3f %s)'.format(chan, freq, _('GHz')) : null,
++					_('Bitrate'), !mlo && rate ? '%d %s'.format(rate, _('Mbit/s')) : null,
++					_('Channel'), !mlo && chan ? '%d (%.3f %s)'.format(chan, freq, _('GHz')) : null,
+ 					_('Country Code'), coco ? '%s'.format(coco) : null,
+-					_('Noise'), noise ? '%.2f %s'.format(noise, _('dBm')) : null,
+-					_('TX Power'), tx_power ? '%.2f %s'.format(tx_power, _('dBm')): null,
++					_('Noise'), !mlo && noise ? '%.2f %s'.format(noise, _('dBm')) : null,
++					_('TX Power'), !mlo && tx_power ? '%.2f %s'.format(tx_power, _('dBm')): null,
+ 				]),
++				mlo ? E('span', { 'style': 'display:flex;flex-wrap:wrap;gap:.5em 1.5em' }, mlo.links.map(link =>
++					L.itemlist(E('span'), [
++						_('Channel'), link.channel ? '%d (%.3f %s)'.format(link.channel, link.frequency / 1000, _('GHz')) : '-',
++						_('Width'), link.width ? '%d %s'.format(link.width, _('MHz')) : null,
++						_('BSSID'), link.address,
++						_('TX Power'), link.txpower != null ? '%s %s'.format(link.txpower, _('dBm')) : null
++					]))) : null,
+ 				E('div', {}, badges)
+ 			])
+ 		]);
+@@ -198,6 +212,7 @@
+ 			this.callSessionAccess('access-group', 'luci-mod-status-index-wifi', 'write'),
+ 			firewall.getZones(),
+ 			L.hasSystemFeature('wifi') ? L.resolveDefault(uci.load('wireless')) : L.resolveDefault(),
++			L.resolveDefault(this.callWifiOverview(), {}),
+ 		]).then(L.bind(data => {
+ 			const tasks = [];
+ 			const radios_networks_hints = data[1];
+@@ -225,7 +240,8 @@
+ 
+ 	render(data) {
+ 		const radios = data[0];
+-		const networks = data[1];
++		const overview = data[7] || {};
++		const networks = data[1].filter(net => !(overview.hidden_networks || []).includes(net.sid));
+ 		const hosthints = data[2];
+ 		const hasReadPermission = data[3];
+ 		const hasWritePermission = data[4];
+@@ -233,9 +249,24 @@
+ 
+ 		const table = E('div', { 'class': 'network-status-table' });
+ 
+-		for (let i = 0; i < radios.sort((a, b) => a.getName().localeCompare(b.getName())).length; i++)
+-			table.appendChild(this.renderbox(radios[i],
+-				networks.filter(net => { return net.getWifiDeviceName() == radios[i].getName() })));
++		const mlo = overview.mlo && networks.some(net => net.sid == overview.mlo.section)
++			? overview.mlo : null;
++		let mloRendered = false;
++		for (const radio of radios.slice().sort((a, b) => a.getName().localeCompare(b.getName()))) {
++			if ((overview.hidden_radios || []).includes(radio.getName()) &&
++				!networks.some(net => net.getWifiDeviceName() == radio.getName()))
++				continue;
++			if (mlo && mlo.devices.includes(radio.getName())) {
++				if (!mloRendered)
++					table.appendChild(this.renderbox(radio, networks.filter(net =>
++						net.sid == mlo.section || mlo.devices.includes(net.getWifiDeviceName())), mlo));
++				mloRendered = true;
++			}
++			else {
++				table.appendChild(this.renderbox(radio,
++					networks.filter(net => net.getWifiDeviceName() == radio.getName())));
++			}
++		}
+ 
+ 		if (!table.lastElementChild)
+ 			return null;
+--- a/modules/luci-mod-status/Makefile
++++ b/modules/luci-mod-status/Makefile
+@@ -9,7 +9,8 @@
+ LUCI_TITLE:=LuCI Status Pages
+ LUCI_DEPENDS:=+luci-base +libiwinfo +rpcd-mod-iwinfo
+ 
+-PKG_RELEASE:=4
++PKG_VERSION=$(PKG_SRC_VERSION)
++PKG_RELEASE:=5
+ PKG_BUILD_DEPENDS:=iwinfo
+ PKG_LICENSE:=Apache-2.0
+ 

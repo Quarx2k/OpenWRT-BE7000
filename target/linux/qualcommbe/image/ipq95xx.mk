@@ -59,7 +59,7 @@ endef
 define Build/be7000-usb-bundle
 	bash $(TOPDIR)/package/boot/be7000-usb/image.sh bundle $@ \
 		$(KDIR)/Image-initramfs $(KDIR)/vmlinux-initramfs.debug \
-		$(KDIR)/image-$(DEVICE_DTS).dtb \
+		$(KDIR)/image-$(firstword $(DEVICE_DTS)).dtb \
 		$(KDIR)/tmp/$(DEVICE_IMG_PREFIX)-ext4-system.img \
 		$(KDIR)/tmp/$(DEVICE_IMG_PREFIX)-ext4-userdata.img \
 		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME) $(TARGET_DIR) $(TOPDIR)
@@ -76,13 +76,14 @@ endef
 define Build/be7000-sysupgrade
 	bash $(TOPDIR)/package/boot/be7000-usb/image.sh bundle $@ \
 		$(KDIR)/Image-initramfs $(KDIR)/vmlinux-initramfs.debug \
-		$(KDIR)/image-$(DEVICE_DTS).dtb $(IMAGE_ROOTFS) - \
+		$(KDIR)/image-$(firstword $(DEVICE_DTS)).dtb $(IMAGE_ROOTFS) - \
 		$(TARGET_CROSS)nm $(SOURCE_DATE_EPOCH) $(DEVICE_NAME) $(TARGET_DIR) $(TOPDIR)
 	$(call Build/be7000-sysupgrade-tar)
 endef
 
 define Device/xiaomi_be7000-common
 	$(call Device/FitImage)
+	KERNEL = kernel-bin | libdeflate-gzip | fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
 	DEVICE_VENDOR := Xiaomi
 	DEVICE_MODEL := BE7000
 	SUPPORTED_DEVICES := xiaomi,be7000
@@ -101,10 +102,10 @@ endef
 define Device/xiaomi_be7000-native
 	$(call Device/xiaomi_be7000-common)
 	DEVICE_VARIANT := Native Ethernet + Native WLAN
-	DEVICE_DTS := ipq9574-be7000-native
+	DEVICE_DTS := ipq9574-be7000-native ipq9574-be7000-native-mlo
 	DEVICE_PACKAGES := -uboot-envtools -kmod-qcom-ppe be7000-usb kmod-qcom-ppe-offload \
 		kmod-ath11k-ahb kmod-qcom-wcss-sec-compat ath11k-firmware-ipq9574 \
-		kmod-ath12k ath12k-firmware-qcn9274 be7000-ath-board luci-app-attendedsysupgrade
+		kmod-ath12k ath12k-firmware-qcn9274 be7000-ath-board luci-app-attendedsysupgrade luci-app-be7000-wifi
 endef
 TARGET_DEVICES += xiaomi_be7000-native
 

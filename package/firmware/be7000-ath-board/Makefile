@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=be7000-ath-board
 PKG_VERSION:=1.1.38
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_SOURCE:=qcom-wlan-firmware-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=file://$(TOPDIR)/dl
 PKG_HASH:=skip
@@ -36,7 +36,9 @@ define Build/Compile
 		$(PKG_BUILD_DIR)/IPQ9574/board-2.bin
 	bash ./board-2.sh ath12k 'bus=pci,qmi-chip-id=0,qmi-board-id=2,variant=Xiaomi-BE7000' \
 		$(PKG_BUILD_DIR)/qcn9224/bdwlan.b0002 $(PKG_BUILD_DIR)/qcn9224/regdb.bin \
-		$(PKG_BUILD_DIR)/qcn9224/board-2.bin
+		$(PKG_BUILD_DIR)/qcn9224/board-2.bin \
+		'bus=pci,qmi-chip-id=0,qmi-board-id=4104,variant=Xiaomi-BE7000' \
+		$(PKG_BUILD_DIR)/qcn9224/bdwlan.b1008
 endef
 
 define Package/be7000-ath-board/install

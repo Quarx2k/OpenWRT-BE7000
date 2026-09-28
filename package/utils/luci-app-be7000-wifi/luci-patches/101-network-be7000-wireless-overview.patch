@@ -1,0 +1,381 @@
+From: Nickolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] luci-mod-network: present BE7000 MLO as one network
+
+Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
+---
+--- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -13,6 +13,16 @@
+ 'require uqr';
+ 
+ const isReadonlyView = !L.hasViewPermission();
++let wifiOverview = {};
++const callWifiOverview = rpc.declare({
++	object: 'be7000.wifi',
++	method: 'overview',
++	expect: { '': {} }
++});
++
++function radio_mlo(radioDev) {
++	return wifiOverview.mlo?.devices[0] == radioDev.getName() ? wifiOverview.mlo : null;
++}
+ 
+ function count_changes(section_id) {
+ 	const changes = ui.changes.changes?.wireless;
+@@ -25,7 +35,7 @@
+ 	return E('span', { 'class': 'ifacebadge' }, [
+ 		E('img', { 'src': L.resource('icons/wifi%s.svg').format(radioDev.isUp() ? '' : '_disabled') }),
+ 		' ',
+-		radioDev.getName()
++		radioDev.getName() + (radio_mlo(radioDev) ? ' · MLO' : '')
+ 	]);
+ }
+ 
+@@ -123,6 +133,14 @@
+ function render_radio_status(radioDev, wifiNets) {
+ 	const name = radioDev.getI18n().replace(/ Wireless Controller .+$/, '');
+ 	const node = E('div', [ E('big', {}, E('strong', {}, name)), E('div') ]);
++	const mlo = radio_mlo(radioDev);
++	if (mlo) {
++		L.itemlist(node.lastElementChild, [
++			'MLO', mlo.links.filter(link => link.channel).map(link =>
++				'%d (%.3f %s), %d %s'.format(link.channel, link.frequency / 1000, _('GHz'), link.width, _('MHz'))).join(' + ') || '?'
++		]);
++		return node;
++	}
+ 	let channel, frequency, bitrate;
+ 
+ 	wifiNets.forEach(wifiNet => {
+@@ -172,6 +190,7 @@
+ function render_modal_status(node, radioNet) {
+ 	if (!radioNet) return;
+ 
++	const mlo = wifiOverview.mlo?.section == radioNet.getName() ? wifiOverview.mlo : null;
+ 	const mode = radioNet.getActiveMode();
+ 	const noise = radioNet.getNoise();
+ 	const bssid = radioNet.getActiveBSSID();
+@@ -189,15 +208,23 @@
+ 	L.itemlist(node.lastElementChild, [
+ 		_('Mode'),       mode,
+ 		_('SSID'),       radioNet.getSSID() ?? '?',
+-		_('BSSID'),      is_assoc ? bssid : null,
++		mlo ? 'MLD' : _('BSSID'), is_assoc ? bssid : null,
+ 		_('Encryption'), is_assoc ? radioNet.getActiveEncryption() ?? _('None') : null,
+-		_('Channel'),    is_assoc ? `${radioNet.getChannel()} (${radioNet.getFrequency() ?? 0} ${_('GHz')})` : null,
+-		_('Tx-Power'),   is_assoc ? `${radioNet.getTXPower()} ${_('dBm')}` : null,
+-		_('Signal'),     is_assoc ? `${radioNet.getSignal()} ${_('dBm')}` : null,
+-		_('Noise'),      (is_assoc && noise != null) ? `${noise} ${_('dBm')}` : null,
+-		_('Bitrate'),    is_assoc ? `${radioNet.getBitRate() ?? 0} ${_('Mbit/s')}` : null,
++		_('Channel'),    !mlo && is_assoc ? `${radioNet.getChannel()} (${radioNet.getFrequency() ?? 0} ${_('GHz')})` : null,
++		_('Tx-Power'),   !mlo && is_assoc ? `${radioNet.getTXPower()} ${_('dBm')}` : null,
++		_('Signal'),     !mlo && is_assoc ? `${radioNet.getSignal()} ${_('dBm')}` : null,
++		_('Noise'),      (!mlo && is_assoc && noise != null) ? `${noise} ${_('dBm')}` : null,
++		_('Bitrate'),    !mlo && is_assoc ? `${radioNet.getBitRate() ?? 0} ${_('Mbit/s')}` : null,
+ 		_('Country'),    is_assoc ? radioNet.getCountryCode() : null
+ 	], [ ' | ', E('br'), E('br'), E('br'), E('br'), E('br'), ' | ', E('br'), ' | ' ]);
++	if (mlo)
++		dom.append(node.lastElementChild, E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5em 1.5em;margin-top:.5em' },
++			mlo.links.map(link => L.itemlist(E('span'), [
++				_('Channel'), link.channel ? '%d (%.3f %s)'.format(link.channel, link.frequency / 1000, _('GHz')) : '-',
++				_('Width'), link.width ? '%d %s'.format(link.width, _('MHz')) : null,
++				_('BSSID'), link.address,
++				_('Tx-Power'), link.txpower != null ? '%s %s'.format(link.txpower, _('dBm')) : null
++			]))));
+ 
+ 	if (!is_assoc)
+ 		dom.append(node.lastElementChild, E('em', disabled ? _('Wireless is disabled') : _('Wireless is not associated')));
+@@ -246,27 +273,22 @@
+ }
+ 
+ function network_updown(id, map, ev) {
+-	const radio = uci.get('wireless', id, 'device');
++	const radios = L.toArray(uci.get('wireless', id, 'device'));
+ 	const disabled = (uci.get('wireless', id, 'disabled') == '1') ||
+-	               (uci.get('wireless', radio, 'disabled') == '1');
++	               radios.some(radio => uci.get('wireless', radio, 'disabled') == '1');
+ 
+ 	if (disabled) {
+ 		uci.unset('wireless', id, 'disabled');
+-		uci.unset('wireless', radio, 'disabled');
++		radios.forEach(radio => uci.unset('wireless', radio, 'disabled'));
+ 	}
+ 	else {
+ 		uci.set('wireless', id, 'disabled', '1');
+ 
+-		let all_networks_disabled = true;
+ 		const wifi_ifaces = uci.sections('wireless', 'wifi-iface');
+-
+-		wifi_ifaces.forEach(wifi_iface => {
+-			if (wifi_iface.device == radio && wifi_iface.disabled != '1')
+-				all_networks_disabled = false;
++		radios.forEach(radio => {
++			if (!wifi_ifaces.some(iface => L.toArray(iface.device).includes(radio) && iface.disabled != '1'))
++				uci.set('wireless', radio, 'disabled', '1');
+ 		});
+-
+-		if (all_networks_disabled)
+-			uci.set('wireless', radio, 'disabled', '1');
+ 	}
+ 
+ 	return map.save().then(function() {
+@@ -358,7 +380,7 @@
+ 						available: available,
+ 						no_outdoor: freq.no_outdoor
+ 					}
+-					
++
+ 				);
+ 			});
+ 
+@@ -431,6 +453,11 @@
+ 					'6g', '6 GHz', { available: this.channels['6g'].length > 3 }
+ 				]
+ 			};
++			if (this.mlo) {
++				this.modes = [ 'be', 'BE', { available: hwmodelist.be } ];
++				this.bands.be = [ '5g', '5 GHz', { available: true } ];
++				this.htmodes.be = this.htmodes.be.slice(0, 9);
++			}
+ 		}, this));
+ 	},
+ 
+@@ -633,6 +660,10 @@
+ 		return this.callTxPowerList(section_id).then(L.bind(function(pwrlist) {
+ 			this.powerval = this.wifiNetwork ? this.wifiNetwork.getTXPower() : null;
+ 			this.poweroff = this.wifiNetwork ? this.wifiNetwork.getTXPowerOffset() : null;
++			if (this.mloLink != null) {
++				this.powerval = wifiOverview.mlo?.links.find(link => link.id == this.mloLink)?.txpower;
++				this.poweroff = null;
++			}
+ 
+ 			this.value('', _('driver default'));
+ 
+@@ -827,6 +858,7 @@
+ 			uci.load('wireless'),
+ 			uci.load('system'),
+ 			firewall.getZones(),
++			L.resolveDefault(callWifiOverview(), {}).then(data => { wifiOverview = data; }),
+ 		]);
+ 	},
+ 
+@@ -914,12 +946,15 @@
+ 			const rv = [];
+ 
+ 			this.radios.forEach(radio => {
++				const wifis = this.wifis.filter(wifi => wifi.getWifiDeviceName() == radio.getName() &&
++					!(wifiOverview.hidden_networks || []).includes(wifi.getName()));
++				const hiddenRadio = (wifiOverview.hidden_radios || []).includes(radio.getName()) ||
++					wifiOverview.mlo?.devices.slice(1).includes(radio.getName());
++				if (hiddenRadio && !wifis.length)
++					return;
+ 				rv.push(radio.getName());
+ 
+-				this.wifis.forEach(wifi => {
+-					if (wifi.getWifiDeviceName() == radio.getName())
+-						rv.push(wifi.getName());
+-				});
++				wifis.forEach(wifi => rv.push(wifi.getName()));
+ 			});
+ 
+ 			return rv;
+@@ -997,74 +1032,87 @@
+ 				const have_mesh = L.hasSystemFeature('hostapd', 'mesh') || L.hasSystemFeature('wpasupplicant', 'mesh');
+ 				let o, ss;
+ 
+-				o = s.option(form.SectionValue, '_device', form.NamedSection, radioNet.getWifiDeviceName(), 'wifi-device', _('Device Configuration'));
+-				o.modalonly = true;
+-
+-				ss = o.subsection;
+-				ss.tab('general', _('General Setup'));
+-				ss.tab('advanced', _('Advanced Settings'));
+-
+-				const isDisabled = (radioNet.get('disabled') == '1' ||
+-					uci.get('wireless', radioNet.getWifiDeviceName(), 'disabled') == 1);
+-
+-				o = ss.taboption('general', form.DummyValue, '_wifistat_modal', _('Status'));
+-				o.cfgvalue = L.bind(function(radioNet) {
+-					return render_modal_status(null, radioNet);
+-				}, this, radioNet);
+-				o.write = function() {};
+-
+-				o = ss.taboption('general', form.Button, '_toggle', isDisabled ? _('Wireless network is disabled') : _('Wireless network is enabled'));
+-				o.inputstyle = isDisabled ? 'apply' : 'reset';
+-				o.inputtitle = isDisabled ? _('Enable') : _('Disable');
+-				o.onclick = ui.createHandlerFn(s, network_updown, s.section, s.map);
+-
+-				o = ss.taboption('general', CBIWifiFrequencyValue, '_freq', '<br />' + _('Operating frequency'), _('Some channels may be restricted to Indoor Only use by your Regulatory Domain. Make sure to follow this advice if a channel is reported as such.'));
+-				o.ucisection = s.section;
+-
+-				if (hwtype == 'mac80211') {
+-					o = ss.taboption('general', form.Flag, 'legacy_rates', _('Allow legacy 802.11b rates'), _('Legacy or badly behaving devices may require legacy 802.11b rates to interoperate. Airtime efficiency may be significantly reduced where these are used. It is recommended to not allow 802.11b rates where possible.'));
+-					o.depends({'_freq': '2g', '!contains': true});
++				const mlo = wifiOverview.mlo?.section == radioNet.getName() ? wifiOverview.mlo : null;
++				const devices = mlo ? mlo.devices : [ radioNet.getWifiDeviceName() ];
++				devices.forEach((device, index) => {
++					o = s.option(form.SectionValue, mlo ? '_device_' + device : '_device', form.NamedSection, device, 'wifi-device', _('Device Configuration') + (mlo ? ' — ' + device : ''));
++					o.modalonly = true;
++
++					ss = o.subsection;
++					ss.tab('general', _('General Setup'));
++					ss.tab('advanced', _('Advanced Settings'));
++
++					const isDisabled = (radioNet.get('disabled') == '1' ||
++						devices.some(name => uci.get('wireless', name, 'disabled') == '1'));
++
++					if (index == 0) {
++						o = ss.taboption('general', form.DummyValue, '_wifistat_modal', _('Status'));
++						o.cfgvalue = L.bind(function(radioNet) {
++							return render_modal_status(null, radioNet);
++						}, this, radioNet);
++						o.write = function() {};
++
++						o = ss.taboption('general', form.Button, '_toggle', isDisabled ? _('Wireless network is disabled') : _('Wireless network is enabled'));
++						o.inputstyle = isDisabled ? 'apply' : 'reset';
++						o.inputtitle = isDisabled ? _('Enable') : _('Disable');
++						o.onclick = ui.createHandlerFn(s, network_updown, s.section, s.map);
++					}
+ 
+-					o = ss.taboption('general', CBIWifiTxPowerValue, 'txpower', _('Maximum transmit power'), _('Specifies the maximum transmit power the wireless radio may use. Depending on regulatory requirements and wireless usage, the actual transmit power may be reduced by the driver.'));
+-					o.wifiNetwork = radioNet;
++					o = ss.taboption('general', CBIWifiFrequencyValue, '_freq', '<br />' + _('Operating frequency'), _('Some channels may be restricted to Indoor Only use by your Regulatory Domain. Make sure to follow this advice if a channel is reported as such.'));
++					o.ucisection = mlo ? device : s.section;
++					o.mlo = !!mlo;
+ 
+-					o = ss.taboption('general', CBIWifiCountryValue, 'country', _('Country Code'));
+-					o.wifiNetwork = radioNet;
++					if (hwtype == 'mac80211') {
++						o = ss.taboption('general', form.Flag, 'legacy_rates', _('Allow legacy 802.11b rates'), _('Legacy or badly behaving devices may require legacy 802.11b rates to interoperate. Airtime efficiency may be significantly reduced where these are used. It is recommended to not allow 802.11b rates where possible.'));
++						o.depends({'_freq': '2g', '!contains': true});
+ 
+-					o = ss.taboption('advanced', form.ListValue, 'cell_density', _('Coverage cell density'), _('Configures data rates based on the coverage cell density. Normal configures basic rates to 6, 12, 24 Mbps if legacy 802.11b rates are not used else to 5.5, 11 Mbps. High configures basic rates to 12, 24 Mbps if legacy 802.11b rates are not used else to the 11 Mbps rate. Very High configures 24 Mbps as the basic rate. Supported rates lower than the minimum basic rate are not offered.'));
+-					o.value('0', _('Disabled'));
+-					o.value('1', _('Normal'));
+-					o.value('2', _('High'));
+-					o.value('3', _('Very High'));
+-
+-					o = ss.taboption('advanced', form.Value, 'distance', _('Distance Optimization'), _('Distance to farthest network member in meters. Set only for distances above one kilometer; otherwise it is harmful.'));
+-					o.datatype = 'or(range(0,114750),"auto")';
+-					o.placeholder = 'auto';
+-
+-					o = ss.taboption('advanced', form.Value, 'frag', _('Fragmentation Threshold'));
+-					o.datatype = 'min(256)';
+-					o.placeholder = _('off');
++						o = ss.taboption('general', CBIWifiTxPowerValue, 'txpower', _('Maximum transmit power'), _('Specifies the maximum transmit power the wireless radio may use. Depending on regulatory requirements and wireless usage, the actual transmit power may be reduced by the driver.'));
++						o.wifiNetwork = radioNet;
++						o.mloLink = mlo ? index : null;
++
++						if (index == 0) {
++							o = ss.taboption('general', CBIWifiCountryValue, 'country', _('Country Code'));
++							o.wifiNetwork = radioNet;
++							if (mlo) {
++								o.write = (section_id, value) => devices.forEach(name => uci.set('wireless', name, 'country', value));
++								o.remove = () => devices.forEach(name => uci.unset('wireless', name, 'country'));
++							}
++						}
+ 
+-					o = ss.taboption('advanced', form.Value, 'rts', _('RTS/CTS Threshold'));
+-					o.datatype = 'uinteger';
+-					o.placeholder = _('off');
++						o = ss.taboption('advanced', form.ListValue, 'cell_density', _('Coverage cell density'), _('Configures data rates based on the coverage cell density. Normal configures basic rates to 6, 12, 24 Mbps if legacy 802.11b rates are not used else to 5.5, 11 Mbps. High configures basic rates to 12, 24 Mbps if legacy 802.11b rates are not used else to the 11 Mbps rate. Very High configures 24 Mbps as the basic rate. Supported rates lower than the minimum basic rate are not offered.'));
++						o.value('0', _('Disabled'));
++						o.value('1', _('Normal'));
++						o.value('2', _('High'));
++						o.value('3', _('Very High'));
++
++						o = ss.taboption('advanced', form.Value, 'distance', _('Distance Optimization'), _('Distance to farthest network member in meters. Set only for distances above one kilometer; otherwise it is harmful.'));
++						o.datatype = 'or(range(0,114750),"auto")';
++						o.placeholder = 'auto';
++
++						o = ss.taboption('advanced', form.Value, 'frag', _('Fragmentation Threshold'));
++						o.datatype = 'min(256)';
++						o.placeholder = _('off');
+ 
+-					o = ss.taboption('advanced', form.Flag, 'noscan', _('Force 40MHz mode'), _('Always use 40MHz channels even if the secondary channel overlaps. Using this option does not comply with IEEE 802.11n-2009!'));
+-					o.rmempty = true;
++						o = ss.taboption('advanced', form.Value, 'rts', _('RTS/CTS Threshold'));
++						o.datatype = 'uinteger';
++						o.placeholder = _('off');
+ 
+-					o = ss.taboption('advanced', form.Value, 'beacon_int', _('Beacon Interval'));
+-					o.datatype = 'range(15,65535)';
+-					o.placeholder = 100;
+-					o.rmempty = true;
++						o = ss.taboption('advanced', form.Flag, 'noscan', _('Force 40MHz mode'), _('Always use 40MHz channels even if the secondary channel overlaps. Using this option does not comply with IEEE 802.11n-2009!'));
++						o.rmempty = true;
+ 
+-					o = ss.taboption('advanced', form.Flag, 'rxldpc', _('Rx LDPC'), _('Low-Density Parity-Check'));
+-					o.default = '1';
++						o = ss.taboption('advanced', form.Value, 'beacon_int', _('Beacon Interval'));
++						o.datatype = 'range(15,65535)';
++						o.placeholder = 100;
++						o.rmempty = true;
+ 
+-					o = ss.taboption('advanced', form.Flag, 'ldpc', _('Tx LDPC'));
+-					o.depends({'rxldpc': '1'});
+-					o.default = '1';
+-				}
++						o = ss.taboption('advanced', form.Flag, 'rxldpc', _('Rx LDPC'), _('Low-Density Parity-Check'));
++						o.default = '1';
+ 
++						o = ss.taboption('advanced', form.Flag, 'ldpc', _('Tx LDPC'));
++						o.depends({'rxldpc': '1'});
++						o.default = '1';
++					}
++				});
+ 
+ 				o = s.option(form.SectionValue, '_device', form.NamedSection, radioNet.getName(), 'wifi-iface', _('Interface Configuration'));
+ 				o.modalonly = true;
+@@ -1076,7 +1124,7 @@
+ 				ss.tab('advanced', _('Advanced Settings'));
+ 				ss.tab('roaming', _('WLAN Roaming'), _('Settings for assisting wireless clients in roaming between multiple APs: 802.11r, 802.11k and 802.11v'));
+ 
+-				o = ss.taboption('general', form.ListValue, 'mode', _('Mode') , !have_mesh ? '<a id="installmesh" href="%s" target="_blank" rel="noreferrer">%s</a>'
++				o = ss.taboption('general', form.ListValue, 'mode', _('Mode') , !mlo && !have_mesh ? '<a id="installmesh" href="%s" target="_blank" rel="noreferrer">%s</a>'
+ 						.format(L.url('admin/system/package-manager') + '?query=wpad-mesh', _('802.11s? Install mesh wpad') ) : '');
+ 				o.value('ap', _('Access Point'));
+ 				o.value('sta', _('Client'));
+@@ -1197,6 +1245,10 @@
+ 
+ 					mode.value('ap-wds', '%s (%s)'.format(_('Access Point'), _('WDS')));
+ 					mode.value('sta-wds', '%s (%s)'.format(_('Client'), _('WDS')));
++					if (mlo) {
++						mode.keylist = [ 'ap' ];
++						mode.vallist = [ _('Access Point') ];
++					}
+ 
+ 					mode.write = function(section_id, value) {
+ 						switch (value) {
+@@ -1506,6 +1558,8 @@
+ 				crypto_modes.sort(function(a, b) { return b[2] - a[2]; });
+ 
+ 				crypto_modes.forEach(crypto_mode => {
++					if (mlo && crypto_mode[0] != 'sae')
++						return;
+ 					const security_level = (crypto_mode[2] >= 30) ? _('strong security')
+ 						: (crypto_mode[2] >= 20) ? _('medium security')
+ 							: (crypto_mode[2] >= 10) ? _('weak security') : _('open network');
+@@ -2603,7 +2657,12 @@
+ 
+ 		return m.render().then(L.bind(function(m, nodes) {
+ 			poll.add(L.bind(function() {
+-				const tasks = [ network.getHostHints(), network.getWifiDevices() ];
++				const tasks = [ network.getHostHints(), network.getWifiDevices(),
++					L.resolveDefault(callWifiOverview(), {}).then(data => {
++						if (wifiOverview.mlo)
++							wifiOverview.mlo.links = data.mlo?.links || [];
++					})
++				];
+ 
+ 				m?.children[0]?.cfgsections?.().forEach(s => {
+ 					const row = nodes.querySelector('.cbi-section-table-row[data-sid="%s"]'.format(s));
+--- a/modules/luci-mod-network/Makefile
++++ b/modules/luci-mod-network/Makefile
+@@ -9,6 +9,8 @@
+ LUCI_TITLE:=LuCI Network Administration
+ LUCI_DEPENDS:=+luci-base +rpcd-mod-iwinfo +luci-lib-uqr
+ 
++PKG_VERSION=$(PKG_SRC_VERSION)
++PKG_RELEASE:=1
+ PKG_LICENSE:=Apache-2.0
+ 
+ include ../../luci.mk

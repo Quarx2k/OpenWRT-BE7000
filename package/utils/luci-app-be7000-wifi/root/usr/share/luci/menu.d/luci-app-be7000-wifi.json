@@ -1,0 +1,8 @@
+{
+	"admin/network/be7000-wifi": {
+		"title": "5 GHz mode",
+		"order": 16,
+		"action": { "type": "view", "path": "network/be7000-wifi" },
+		"depends": { "acl": [ "luci-app-be7000-wifi" ] }
+	}
+}

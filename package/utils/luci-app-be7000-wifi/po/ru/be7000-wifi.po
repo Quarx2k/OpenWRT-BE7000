@@ -1,0 +1,62 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\nLanguage: ru\n"
+
+msgid "5 GHz mode"
+msgstr "Режим 5 ГГц"
+
+msgid "One 5 GHz radio"
+msgstr "Одно радио 5 ГГц"
+
+msgid "Two independent 5 GHz networks"
+msgstr "Две отдельные сети 5 ГГц"
+
+msgid "One MLO network (two links)"
+msgstr "Одна сеть MLO (две связи)"
+
+msgid "Combine the radios into MLO (MLD)"
+msgstr "Объединить радио в MLO (MLD)"
+
+msgid "MLO requires a WPA2-Personal or WPA3-Personal network with an 8–63 character password. The MLO network will use WPA3."
+msgstr "Для MLO нужна сеть с WPA2-Personal или WPA3-Personal и паролем длиной 8–63 символа. Сеть MLO будет использовать WPA3."
+
+msgid "Enable a second 5 GHz radio"
+msgstr "Включить второе радио 5 ГГц"
+
+msgid "Current mode: %s"
+msgstr "Текущий режим: %s"
+
+msgid "The boot files for switching radio modes are not installed."
+msgstr "Загрузочные файлы для переключения режимов не установлены."
+
+msgid "Another change is being saved. Try again."
+msgstr "Другая настройка сейчас сохраняется. Повторите попытку."
+
+msgid "The main 5 GHz access point was not found."
+msgstr "Основная точка доступа 5 ГГц не найдена."
+
+msgid "Invalid radio mode."
+msgstr "Неверный режим радио."
+
+msgid "Save and reboot"
+msgstr "Сохранить и перезагрузить"
+
+msgid "Saved. Reboot to apply."
+msgstr "Сохранено. Для применения перезагрузите роутер."
+
+msgid "After reboot: one 5 GHz network with the original channel width."
+msgstr "После перезагрузки останется одна сеть 5 ГГц с исходной шириной канала."
+
+msgid "After reboot: two separate 5 GHz networks, each with its own name."
+msgstr "После перезагрузки будут две отдельные сети 5 ГГц, каждая со своим именем."
+
+msgid "After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channels 36 and 149, 80 MHz each."
+msgstr "После перезагрузки будет одна сеть MLO с WPA3 и двумя связями 5 ГГц. По умолчанию — каналы 36 и 149, по 80 МГц."
+
+msgid "Rebooting…"
+msgstr "Перезагрузка…"
+
+msgid "Waiting for device..."
+msgstr "Ожидание устройства…"
+
+msgid "The reboot command failed with code %d"
+msgstr "Не удалось перезагрузить роутер: код %d"

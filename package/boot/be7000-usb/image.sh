@@ -93,6 +93,10 @@ case "$mode" in
 		else
 		cp "$image" "$base/payload/Image"
 		cp "$dtb" "$base/payload/be7000-spin-table.dtb"
+		if [[ ${9:-} == xiaomi_be7000-native ]]; then
+			cp "$dtb" "$base/payload/wifi-single.dtb"
+			cp "${dtb%-native.dtb}-native-mlo.dtb" "$base/payload/wifi-dual.dtb"
+		fi
 		"$nm" -n "$elf" >"$base/payload/System.map"
 		[[ $(od -An -tx1 -j56 -N4 "$image" | tr -d ' \n') == 41524d64 ]]
 		text_offset=$(od -An -tu8 --endian=little -j8 -N8 "$image" | tr -d ' ')
@@ -111,6 +115,7 @@ case "$mode" in
 		printf '{\n  "kernel_base": "0x%x",\n  "kernel_entry": "0x%x",\n  "text_offset": %d,\n  "image_size": %d,\n  "image_bytes": %d,\n  "kernel_memsz": %d,\n  "secondary_holding_pen": "0x%x",\n  "cpu_release_addr": "0x4fb3eff8"\n}\n' \
 			"$kernel_base" "$entry" "$text_offset" "$image_size" "$image_bytes" "$memsz" "$pen" >"$base/payload/target-layout.json"
 		bash "$package/prepare-boot.sh" "$base" "$rootfs" "$entry" "$memsz" "$pen_hex"
+		[[ ${9:-} != xiaomi_be7000-native ]] || touch "$base/boot/wifi-mode-supported"
 		mkdir -p "$(dirname "$template")"
 		template_tmp=$(mktemp "$template.XXXXXX")
 		tar -C "$base" -cf "$template_tmp" boot payload

@@ -5,6 +5,11 @@ base=${0%/*}
 . "$base/target.env"
 [ "$#" -eq 1 ] && [ -r "$1" ] || exit 2
 fail() { echo 'Invalid Image/DTB/purgatory placement' >&2; exit 1; }
+DTB_BYTES=@DTB_BYTES@
+if [ -f "$base/wifi-mode-supported" ]; then
+    DTB_BYTES=$(wc -c < "$base/be7000-spin-table.dtb")
+    [ "$DTB_BYTES" -ge 4096 ] && [ "$DTB_BYTES" -le 2097152 ] || fail
+fi
 rows=$(awk '/^segment\[[0-9]+\]\.mem(sz)? += / {print $1, $3}' "$1")
 [ "$(printf '%s\n' "$rows" | wc -l)" -eq 6 ] || fail
 get() {
@@ -23,7 +28,7 @@ P=$(get 'segment[2].mem'); PS=$(get 'segment[2].memsz')
 [ "$((HOLDING_PEN))" -ge "$((K))" ] && [ "$((HOLDING_PEN))" -lt "$((K + KS))" ] || fail
 [ "$((D))" -ge "$((K + KS))" ] || fail
 [ "$((P))" -ge "$((D + DS))" ] || fail
-[ "$((DS))" -ge @DTB_BYTES@ ] && [ "$((DS))" -le 2097152 ] || fail
+[ "$((DS))" -ge "$DTB_BYTES" ] && [ "$((DS))" -le 2097152 ] || fail
 [ "$((PS))" -gt 0 ] && [ "$((PS))" -le 2097152 ] || fail
 [ "$((P + PS))" -le "$((0x49b00000))" ] || fail
 printf '%s %s\n' "$D" "$P"

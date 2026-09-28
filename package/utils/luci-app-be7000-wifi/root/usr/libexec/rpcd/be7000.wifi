@@ -1,0 +1,15 @@
+#!/bin/bash
+
+case "$1:$2" in
+	list:) printf '%s\n' '{"status":{},"overview":{},"set":{"mode":"","mlo":false}}';;
+	call:status) exec /usr/libexec/be7000-wifi status;;
+	call:overview) exec /usr/libexec/be7000-wifi overview;;
+	call:set)
+		. /usr/share/libubox/jshn.sh
+		json_load "$(cat)" || exit 1
+		json_get_var mode mode
+		json_get_var mlo mlo
+		exec /usr/libexec/be7000-wifi set "$mode" "${mlo:-0}"
+		;;
+	*) exit 1;;
+esac

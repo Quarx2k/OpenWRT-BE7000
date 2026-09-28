@@ -72,7 +72,6 @@
 		rsvd1@4fa00000 { reg = <0 0x4fa00000 0 0x40000>; no-map; };
 		rsvd2@4fb00000 { reg = <0 0x4fb00000 0 0x40000>; no-map; };
 		qcn9224_pcie2: qcn9224-pcie2@54100000 { reg = <0 0x54100000 0 0x3200000>; no-map; };
-		qcn9224_pcie3: qcn9224-pcie3@57300000 { reg = <0 0x57300000 0 0x3200000>; no-map; };
 	};
 	regulator_3p3: regulator-3p3 {
 		compatible = "regulator-fixed";

@@ -4,6 +4,7 @@
 set -euo pipefail
 export LC_ALL=C
 family=$1 name=$2 board=$3 regdb=$4 output=$5
+shift 5
 case "$family" in
 	ath11k|ath12k) ;;
 	*) exit 1 ;;
@@ -44,4 +45,10 @@ entry() {
 	padding "$((${#magic} + 1))"
 	entry 0 "$board"
 	entry 1 "$regdb"
+	while (($#)); do
+		name=$1 board=$2
+		shift 2
+		entry 0 "$board"
+		entry 1 "$regdb"
+	done
 } > "$output"

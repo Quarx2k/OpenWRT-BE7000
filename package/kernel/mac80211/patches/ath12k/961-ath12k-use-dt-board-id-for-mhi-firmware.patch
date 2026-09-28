@@ -1,0 +1,59 @@
+From: Nickolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] wifi: ath12k: use DT board ID for MHI firmware selection
+
+Use the board override for early firmware selection as well as QMI BDF
+selection. BE7000 selects board 0x1008 for its split-PHY configuration.
+
+Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
+--- a/drivers/net/wireless/ath/ath12k/mhi.c
++++ b/drivers/net/wireless/ath/ath12k/mhi.c
+@@ -7,6 +7,7 @@
+ #include <linux/msi.h>
+ #include <linux/pci.h>
+ #include <linux/firmware.h>
++#include <linux/of.h>
+ 
+ #include "core.h"
+ #include "debug.h"
+@@ -188,7 +189,7 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
+ {
+ 	struct ath12k_base *ab = ab_pci->ab;
+ 	struct mhi_controller *mhi_ctrl;
+-	unsigned int board_id;
++	unsigned int board_id = 0;
+ 	int ret;
+ 	bool dualmac = false;
+ 
+@@ -204,19 +205,23 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
+ 	mhi_ctrl->reg_len = ab->mem_len;
+ 	mhi_ctrl->rddm_size = ab->hw_params->rddm_size;
+ 
+-	if (ab->hw_params->otp_board_id_register) {
++	if (!of_property_read_u32(ab->dev->of_node, "qcom,board_id", &board_id) ||
++	    !of_property_read_u32(ab->dev->of_node, "qcom,board-id", &board_id)) {
++		ath12k_info(ab, "using DT board id %#x for MHI firmware selection\n",
++			    board_id);
++	} else if (ab->hw_params->otp_board_id_register) {
+ 		board_id =
+ 			ath12k_pci_read32(ab, ab->hw_params->otp_board_id_register);
+ 		board_id = u32_get_bits(board_id, OTP_BOARD_ID_MASK);
++	}
+ 
+-		if (!board_id || (board_id == OTP_INVALID_BOARD_ID)) {
+-			ath12k_dbg(ab, ATH12K_DBG_BOOT,
+-				   "failed to read board id\n");
+-		} else if (board_id & OTP_VALID_DUALMAC_BOARD_ID_MASK) {
+-			dualmac = true;
+-			ath12k_dbg(ab, ATH12K_DBG_BOOT,
+-				   "dualmac fw selected for board id: %x\n", board_id);
+-		}
++	if (!board_id || (board_id == OTP_INVALID_BOARD_ID)) {
++		ath12k_dbg(ab, ATH12K_DBG_BOOT,
++			   "failed to read board id\n");
++	} else if (board_id & OTP_VALID_DUALMAC_BOARD_ID_MASK) {
++		dualmac = true;
++		ath12k_dbg(ab, ATH12K_DBG_BOOT,
++			   "dualmac fw selected for board id: %x\n", board_id);
+ 	}
+ 
+ 	if (dualmac) {

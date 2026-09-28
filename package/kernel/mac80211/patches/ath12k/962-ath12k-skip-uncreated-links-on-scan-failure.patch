@@ -1,0 +1,20 @@
+From: Nickolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] wifi: ath12k: skip uncreated links on scan failure
+
+MLO links can exist before a vdev is created and assigned to a radio.
+When a parallel scan fails, the cleanup loop also visits these links and
+dereferences their NULL arvif->ar. Skip uncreated links, as the scan
+cancellation path already does.
+
+Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5806,7 +5806,7 @@ int ath12k_mac_op_hw_scan(struct ieee80211_hw *hw,
+ 		links_map = ahvif->links_map;
+ 		for_each_set_bit(link_id, &links_map, ATH12K_NUM_MAX_LINKS) {
+ 			arvif = wiphy_dereference(hw->wiphy, ahvif->link[link_id]);
+-			if (!arvif)
++			if (!arvif || !arvif->is_created)
+ 				continue;
+ 
+ 			ar = arvif->ar;

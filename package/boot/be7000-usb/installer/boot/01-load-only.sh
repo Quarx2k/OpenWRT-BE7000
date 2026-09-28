@@ -26,6 +26,21 @@ be7000_kernel_profile() {
     }
 }
 DTB_TEMPLATE="$BASE_DIR/be7000-spin-table.dtb"
+DTB_BYTES=@DTB_BYTES@
+if [ -f "$BASE_DIR/wifi-mode-supported" ]; then
+	be7000_kernel_profile || exit 1
+	WIFI_DATA=$(mktemp -d /tmp/be7000-wifi-mode.XXXXXX)
+	mount -t ext4 -o loop,ro "$BASE_DIR/../userdata.img" "$WIFI_DATA" || { rmdir "$WIFI_DATA"; exit 1; }
+	WIFI_MODE=$(uci -q -c "$WIFI_DATA/upper/etc/config" get be7000_wifi.settings.mode || true)
+	umount "$WIFI_DATA" || exit 1
+	rmdir "$WIFI_DATA"
+	case "$WIFI_MODE" in dual) ;; *) WIFI_MODE=single;; esac
+	[ -s "$BASE_DIR/../payload/wifi-$WIFI_MODE.dtb" ] || exit 1
+	ln -s "wifi-$WIFI_MODE.dtb" "$BASE_DIR/../payload/.wifi-dtb.$$"
+	mv -Tf "$BASE_DIR/../payload/.wifi-dtb.$$" "$BASE_DIR/../payload/be7000-spin-table.dtb"
+	DTB_BYTES=$(wc -c < "$DTB_TEMPLATE")
+	[ "$DTB_BYTES" -ge 4096 ] && [ "$DTB_BYTES" -le 2097152 ] || exit 1
+fi
 LIVE_DTB="/tmp/be7000-kexec-spin-table.$$.dtb"
 MEM_MIN="0x42000000"
 EXPECTED_KERNEL_BASE="0x42000000"
@@ -187,7 +202,7 @@ done
 [ "$(cat /sys/kernel/kexec_loaded)" = "0" ] || die "unexpected kexec_loaded state"
 
 cp "$DTB_TEMPLATE" "$LIVE_DTB"
-[ "$(wc -c < "$LIVE_DTB")" -eq @DTB_BYTES@ ] || die "live DTB is unexpectedly small"
+[ "$(wc -c < "$LIVE_DTB")" -eq "$DTB_BYTES" ] || die "live DTB is unexpectedly small"
 [ "$(strings "$LIVE_DTB" | grep -c 'spin-table$')" = "3" ] ||
 	die "target DTB does not contain three spin-table CPU methods"
 
