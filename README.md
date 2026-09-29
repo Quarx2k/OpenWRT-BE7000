@@ -12,15 +12,9 @@ Hardware acceleration (PPE offload) is supported for **PPPoE and Ethernet**.
 
 ## Updating
 
-Use **LuCI → System → Attended Sysupgrade** with the preconfigured server
-[openwrt.quarx2k.dev](https://openwrt.quarx2k.dev/) to build an update with your
-selected packages from the available repositories.
+Online updates from the server are available through **LuCI → System → Attended Sysupgrade**.
 
-The Windows/Linux installer also supports updating an existing USB installation,
-from stock firmware or running OpenWrt. Its update mode preserves settings, but
-uses the fixed package set in `firmware.bin`; additional installed packages are
-not carried over. Add custom files, such as hotplug scripts, to
-`/etc/sysupgrade.conf` to include them in the settings backup.
+To preserve your scripts and other files during an update, add their paths to `/etc/sysupgrade.conf`.
 
 ## Building from source
 
