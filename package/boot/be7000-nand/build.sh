@@ -12,7 +12,7 @@ build_mode=${7:-build}
 mkdir -p "$out"
 out=$(realpath "$out")
 pkg=$source_dir/package/boot/be7000-nand
-version=$(cat "$cold/linux-6.18.52/include/config/kernel.release")
+version=$(cat "$cold"/linux-*/include/config/kernel.release)
 linux=$work/linux-$version
 root=$work/root
 if [[ ! -d $linux ]]; then
