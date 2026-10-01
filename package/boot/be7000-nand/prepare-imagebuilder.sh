@@ -16,7 +16,9 @@ for file in ath12k.ko ath12k_wifi7.ko modules.builtin modules.builtin.modinfo; d
     cp "$root/lib/modules/$kernel/$file" "$pkg/modules/$kernel/"
 done
 cp "$nand/kernel.itb" "$ib/build_dir/target-aarch64_cortex-a53_musl/linux-qualcommbe_ipq95xx/xiaomi_be7000-nand-kernel.bin"
-printf '\ninclude $(TOPDIR)/package/boot/be7000-nand/imagebuilder.mk\n' >>"$ib/target/linux/qualcommbe/image/ipq95xx.mk"
+if ! grep -q 'include $(TOPDIR)/package/boot/be7000-nand/imagebuilder.mk' "$ib/target/linux/qualcommbe/image/ipq95xx.mk"; then
+    printf '\ninclude $(TOPDIR)/package/boot/be7000-nand/imagebuilder.mk\n' >>"$ib/target/linux/qualcommbe/image/ipq95xx.mk"
+fi
 sed -i '/^define Device\/xiaomi_be7000-common$/a\	FILESYSTEMS := ext4' "$ib/target/linux/qualcommbe/image/ipq95xx.mk"
 sed -i '/$(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))/a\	$(if $(filter DEVICE_xiaomi_be7000-nand,$(USER_PROFILE)),bash $(TOPDIR)/package/boot/be7000-nand/imagebuilder-root.sh $(TARGET_DIR))' "$ib/Makefile"
 sed -i 's/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/CONFIG_TARGET_ROOTFS_SQUASHFS=y/' "$ib/.config"

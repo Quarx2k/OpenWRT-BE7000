@@ -7,8 +7,9 @@ work=${4:?new independent Linux build directory}
 out=${5:?output directory}
 jobs=${6:-24}
 build_mode=${7:-build}
-[[ $build_mode == build || $build_mode == pack ]]
-[[ $work == /home/* && $work != "$base" && $work != "$cold" ]]
+[[ $build_mode == build || $build_mode == pack || $build_mode == image ]]
+work=$(realpath -m "$work")
+[[ $work != / && $work != "$base" && $work != "$cold" ]]
 mkdir -p "$out"
 out=$(realpath "$out")
 pkg=$source_dir/package/boot/be7000-nand
@@ -19,6 +20,9 @@ if [[ ! -d $linux ]]; then
   [[ ! -e $work ]] || { echo 'Use a new build directory' >&2; exit 1; }
   mkdir -p "$work"
   cp -a --reflink=auto "$cold/linux-$version" "$linux"
+  if [[ -e $linux/drivers/rpmsg/qcom_glink_be7000.h ]]; then
+    patch --batch -R -d "$linux" -p1 <"$source_dir/target/linux/qualcommbe/patches-6.18/9502-be7000-rpm-handoff.patch"
+  fi
 fi
 toolchain=($base/staging_dir/toolchain-aarch64_cortex-a53_gcc-*_musl)
 export PATH=${toolchain[0]}/bin:$base/staging_dir/host/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -46,7 +50,8 @@ fi
 "$linux/scripts/config" --file "$linux/.config" --set-str INITRAMFS_SOURCE '' \
   --set-str CMDLINE "$cmdline" --disable CMDLINE_FORCE --enable CMDLINE_FROM_BOOTLOADER \
   --disable MTD_BLOCK --disable MTD_UBI_GLUEBI --disable MTD_ROOTFS_ROOT_DEV --disable MTD_SPLIT_SQUASHFS_ROOT \
-  --enable MTD_UBI_BLOCK --enable UBIFS_FS --enable SQUASHFS --enable PM_OPP --enable LEDS_GPIO
+  --enable MTD_UBI_BLOCK --enable UBIFS_FS --enable SQUASHFS --enable PM_OPP --enable LEDS_GPIO \
+  --enable PHY_QCOM_QMP_COMBO
 make_args=(-C "$linux" ARCH=arm64 CROSS_COMPILE="$cross" KERNELRELEASE="$version" KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=buildhost KBUILD_BUILD_VERSION=0)
 make "${make_args[@]}" olddefconfig
 make "${make_args[@]}" -j"$jobs" Image
@@ -120,11 +125,14 @@ EOF
 mkimage -f "$out/kernel.its" "$out/kernel.itb" >"$out/fit.txt"
 if [[ $build_mode == build ]]; then
   bash "$pkg/prepare-root.sh" "$source_dir" "$base" "$root"
+elif [[ $build_mode == image ]]; then
+  bash "$pkg/prepare-root.sh" "$source_dir" "$base" "$root" "${8:?OpenWrt root}"
 fi
 grep -qx be7000-nand-v1 "$root/etc/be7000-nand-layout"
 bash "$pkg/build-wifi.sh" "$base" "$linux" "$work" "$root" "$jobs"
 cp "$linux/modules.builtin" "$linux/modules.builtin.modinfo" "$root/lib/modules/$version/"
-mksquashfs4 "$root" "$out/root.squashfs" -noappend -all-root -comp xz -b 262144 -no-xattrs >"$out/squashfs.log"
+mksquashfs4 "$root" "$out/root.squashfs" -noappend -all-root -comp xz -b 262144 -no-xattrs \
+  -p '/dev d 755 0 0' -p '/dev/console c 600 0 0 5 1' >"$out/squashfs.log"
 cat >"$out/factory.ini" <<EOF
 [kernel]
 mode=ubi

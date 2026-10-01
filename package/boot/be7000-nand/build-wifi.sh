@@ -8,7 +8,7 @@ jobs=${5:-24}
 pkg=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 wifi=$work/mac80211-nand
 prepared=$base/build_dir/target-aarch64_cortex-a53_musl/linux-qualcommbe_ipq95xx/mac80211-regular/backports-7.2
-[[ $work == /home/* && $wifi != "$prepared" ]]
+[[ $work == /* && $wifi != "$prepared" ]]
 [[ -d $wifi ]] || cp -a --reflink=auto "$prepared" "$wifi"
 if [[ ! -f $wifi/drivers/net/wireless/ath/ath12k/be7000.c ]]; then
   patch --batch -p1 -d "$wifi" <"$pkg/ath12k-patches/001-be7000-radio-mode.patch"

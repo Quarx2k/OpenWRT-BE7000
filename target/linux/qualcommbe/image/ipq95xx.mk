@@ -148,3 +148,5 @@ define Device/xiaomi_be7000-wired
 		be7000-usb kmod-qcom-ppe-offload
 endef
 TARGET_DEVICES += xiaomi_be7000-wired
+
+-include $(TOPDIR)/package/boot/be7000-nand/imagebuilder.mk
