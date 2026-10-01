@@ -3,6 +3,7 @@ base-files
 bash
 be7000-ath-board
 blkid
+block-mount
 busybox
 ca-bundle
 dnsmasq
@@ -30,6 +31,7 @@ ath11k-firmware-ipq9574
 ath12k-firmware-qcn9274
 libc
 libgcc
+libubus
 libustream-mbedtls
 logd
 luci
