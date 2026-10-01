@@ -2,7 +2,7 @@
 
 **English** · [Русский](README.ru.md)
 
-OpenWrt **SNAPSHOT r36538+77-18304dd747** for Xiaomi BE7000, based on **Linux 6.18.52**. Boots from a USB drive using **kexec**. Wi-Fi uses the native ath11k/ath12k drivers.
+OpenWrt **SNAPSHOT r36754+92-c1b3943aa3** for Xiaomi BE7000, based on **Linux 6.18.54**. Boots from a USB drive using **kexec**. Wi-Fi uses the native ath11k/ath12k drivers.
 
 Hardware acceleration (PPE offload) is supported for **PPPoE and Ethernet**.
 
