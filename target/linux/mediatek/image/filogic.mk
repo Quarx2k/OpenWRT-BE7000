@@ -490,15 +490,43 @@ endif
 endef
 TARGET_DEVICES += asus_rt-ax57m
 
-define Device/asus_rt-ax59u
+define Device/asus_rt-ax59u-common
   DEVICE_VENDOR := ASUS
   DEVICE_MODEL := RT-AX59U
-  DEVICE_DTS := mt7986a-asus-rt-ax59u
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES := kmod-usb3 kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
+endef
+
+define Device/asus_rt-ax59u
+  DEVICE_DTS := mt7986a-asus-rt-ax59u
+  $(call Device/asus_rt-ax59u-common)
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 TARGET_DEVICES += asus_rt-ax59u
+
+define Device/asus_rt-ax59u-ubi
+  DEVICE_VARIANT := (UBI)
+  DEVICE_DTS := mt7986a-asus-rt-ax59u-ubi
+  $(call Device/asus_rt-ax59u-common)
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  KERNEL_IN_UBI := 1
+  UBOOTENV_IN_UBI := 1
+  IMAGES := sysupgrade.itb
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  KERNEL := kernel-bin | lzma
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | \
+	pad-to 64k
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-with-rootfs | \
+	append-metadata
+  ARTIFACTS := bl31-uboot.fip preloader.bin
+  ARTIFACT/bl31-uboot.fip := mt7986-bl31-uboot asus_rt-ax59u
+  ARTIFACT/preloader.bin := mt7986-bl2 spim-nand-ubi-1m-ddr4
+endef
+TARGET_DEVICES += asus_rt-ax59u-ubi
 
 define Device/asus_tuf-ax4200
   DEVICE_VENDOR := ASUS
@@ -829,6 +857,17 @@ define Device/bananapi_bpi-r4-pro-common
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
   IMAGE/sysupgrade.itb := append-kernel | fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-with-rootfs | pad-rootfs | append-metadata
 endef
+
+define Device/bananapi_bpi-r4-pro-4e
+  DEVICE_MODEL := BPi-R4 Pro 4E
+  DEVICE_DTS := mt7988a-bananapi-bpi-r4-pro-4e
+  DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4-pro-4e
+  DEVICE_BL2 := comb
+  $(call Device/bananapi_bpi-r4-pro-common)
+  DEVICE_PACKAGES += mt7988-2p5g-phy-firmware
+  DEVICE_DTS_OVERLAY += mt7988a-bananapi-bpi-r4-pro-4e-wan-phy mt7988a-bananapi-bpi-r4-pro-4e-wan-sfp
+endef
+TARGET_DEVICES += bananapi_bpi-r4-pro-4e
 
 define Device/bananapi_bpi-r4-pro-8x
   DEVICE_MODEL := BPi-R4 Pro 8X
