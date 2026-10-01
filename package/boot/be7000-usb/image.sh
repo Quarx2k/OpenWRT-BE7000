@@ -26,7 +26,7 @@ case "$mode" in
 		gzip -1 -c "$base/system.img" > "$upgrade/system.img.gz"
 		tar -C "$base" -czf "$upgrade/boot.tar.gz" boot
 		tar -C "$base" -czf "$upgrade/payload.tar.gz" payload
-		(cd "$upgrade"; wc -c system.img.gz boot.tar.gz payload.tar.gz | head -n 3) > "$upgrade/FILES"
+		(cd "$upgrade"; wc -c system.img.gz boot.tar.gz payload.tar.gz | sed -n '1,3p') > "$upgrade/FILES"
 		tar -C "$work" -cf "$output" sysupgrade-be7000/FORMAT sysupgrade-be7000/FILES \
 			sysupgrade-be7000/system.img.gz sysupgrade-be7000/boot.tar.gz sysupgrade-be7000/payload.tar.gz
 		;;
