@@ -122,6 +122,24 @@ define Device/xiaomi_be7000-native
 endef
 TARGET_DEVICES += xiaomi_be7000-native
 
+define Device/xiaomi_be7000-native-nand
+	$(call Device/xiaomi_be7000-native)
+	DEVICE_VARIANT := Native WLAN / stock U-Boot RAM boot
+	DEVICE_DTS := ipq9574-be7000-native-nand
+	KERNEL_LOADADDR := 0x41000000
+	DEVICE_DTS_CONFIG := config@be7000
+	IMAGES :=
+	ARTIFACTS :=
+endef
+TARGET_DEVICES += xiaomi_be7000-native-nand
+
+define Device/xiaomi_be7000-native-mlo-nand
+	$(call Device/xiaomi_be7000-native-nand)
+	DEVICE_VARIANT := Native dual radio / stock U-Boot RAM boot
+	DEVICE_DTS := ipq9574-be7000-native-mlo-nand
+endef
+TARGET_DEVICES += xiaomi_be7000-native-mlo-nand
+
 define Device/xiaomi_be7000-wired
 	$(call Device/xiaomi_be7000-common)
 	DEVICE_VARIANT := Wired / official kernel module profile

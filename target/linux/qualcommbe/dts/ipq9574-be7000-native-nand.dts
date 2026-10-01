@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+#include "ipq9574-be7000-native.dts"
+#include "ipq9574-be7000-uboot.dtsi"

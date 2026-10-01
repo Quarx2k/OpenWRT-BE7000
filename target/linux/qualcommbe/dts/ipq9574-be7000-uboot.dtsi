@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+
+
+/ {
+	chosen {
+		bootargs = "console=ttyMSM0,115200n8 earlycon root=/dev/ram0 rdinit=/usr/libexec/be7000-usb-init maxcpus=4 be7000_printk=1 loglevel=7 pcie_pme=nomsi pcie_port_pm=off be7000_usb_dir=BE7000-OpenWrt-Snapshot panic=10";
+	};
+};
+
+&cpu1 {
+	enable-method = "psci";
+	/delete-property/ cpu-release-addr;
+};
+
+&cpu2 {
+	enable-method = "psci";
+	/delete-property/ cpu-release-addr;
+};
+
+&cpu3 {
+	enable-method = "psci";
+	/delete-property/ cpu-release-addr;
+};
