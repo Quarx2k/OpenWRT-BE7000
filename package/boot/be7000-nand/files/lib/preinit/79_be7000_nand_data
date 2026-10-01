@@ -1,6 +1,7 @@
 be7000_nand_data() {
 	local dir marker=0 data=0
 	. /lib/be7000-nand.sh
+	. /lib/upgrade/nand.sh
 	be7000_nand_guard || return 1
 	[ -f /sys/class/ubi/ubi1/mtd_num ] || ubiattach -m 28 -d 1 || :
 	for dir in /sys/class/ubi/ubi1_*; do
@@ -12,10 +13,13 @@ be7000_nand_data() {
 		[ ! -f /sys/class/ubi/ubi1/mtd_num ] || ubidetach -m 28 || return 1
 		ubiformat /dev/mtd28 -y || return 1
 		ubiattach -m 28 -d 1 || return 1
+		ubi_mknod /sys/class/ubi/ubi1 || return 1
 		ubimkvol /dev/ubi1 -N be7000-nand-v1 -s 126976 || return 1
 		data=0
 	fi
-	[ "$data" = 1 ] || ubimkvol /dev/ubi1 -N rootfs_data -m
+	ubi_mknod /sys/class/ubi/ubi1 || return 1
+	[ "$data" = 1 ] || ubimkvol /dev/ubi1 -N rootfs_data -m || return 1
+	nand_find_volume ubi1 rootfs_data >/dev/null
 }
 
 boot_hook_add preinit_main be7000_nand_data
