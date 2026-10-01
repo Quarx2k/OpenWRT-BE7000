@@ -28,7 +28,7 @@
 +		for (i = 0; i < priv->num_leds; i++) {
 +			struct led_classdev *led = &priv->leds[i].cdev;
 +
-+			if (strcmp(led->name, order[step]))
++			if (strcmp(dev_name(led->dev), order[step]))
 +				continue;
 +			gpio_led_set(led, LED_FULL);
 +			msleep(120);
