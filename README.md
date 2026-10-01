@@ -38,7 +38,7 @@ apk update
 
 ## Building from source
 
-Use Linux or WSL2 with the OpenWrt build dependencies installed.
+Use Linux or WSL2 with the OpenWrt build dependencies installed. The example builds the USB version; for NAND, replace `config.be7000-usb` with `config.be7000-nand`.
 
 ```bash
 git clone --branch be7000-snapshot --single-branch \
@@ -49,13 +49,13 @@ cd OpenWRT-BE7000
 ./scripts/feeds install -a
 bash package/utils/luci-app-be7000-wifi/prepare-luci.sh .
 
-cp config.be7000-native .config
+cp config.be7000-usb .config
 make defconfig
 make download -j8
 make -j"$(nproc)"
 ```
 
-Images and Windows/Linux installer archives are written to "bin/targets/qualcommbe/ipq95xx/".
+Images, sysupgrade files, and Windows/Linux installers are written to `bin/targets/qualcommbe/ipq95xx/`.
 
 ## Support the project
 
