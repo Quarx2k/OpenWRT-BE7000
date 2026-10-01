@@ -1,0 +1,9 @@
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -905,6 +905,7 @@ config SERIAL_MSM
+ 	tristate "MSM on-chip serial port support"
+ 	depends on ARCH_QCOM || COMPILE_TEST
++	select PM_OPP
+ 	select SERIAL_CORE
+ 
+ config SERIAL_MSM_CONSOLE
