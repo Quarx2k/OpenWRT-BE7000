@@ -24,7 +24,7 @@ toolchain=($base/staging_dir/toolchain-aarch64_cortex-a53_gcc-*_musl)
 export PATH=${toolchain[0]}/bin:$base/staging_dir/host/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export STAGING_DIR=$base/staging_dir/target-aarch64_cortex-a53_musl GCC_HONOUR_COPTS=s
 cross=aarch64-openwrt-linux-musl-
-cmdline='console=ttyMSM0,115200n8 earlycon ubiblock=0,rootfs root=/dev/ubiblock0_1 rootfstype=squashfs rootwait ro maxcpus=4 be7000_printk=1 loglevel=7 pcie_pme=nomsi pcie_port_pm=off panic=10'
+cmdline='console=ttyMSM0,115200n8 earlycon ubi.block=0,rootfs root=/dev/ubiblock0_1 rootfstype=squashfs rootwait ro maxcpus=4 be7000_printk=1 loglevel=7 pcie_pme=nomsi pcie_port_pm=off panic=10'
 ! grep -q be7000_pll_restart "$linux/drivers/clk/qcom/apss-ipq6018.c"
 test ! -e "$linux/drivers/rpmsg/qcom_glink_be7000.h"
 grep -q BE7000_CRASH_HEADER_SIZE "$linux/kernel/printk/be7000_persist.h"
