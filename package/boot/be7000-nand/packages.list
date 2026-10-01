@@ -50,6 +50,7 @@ ppp-mod-pppoe
 procd
 procd-seccomp
 procd-ujail
+swap-utils
 ubi-utils
 uboot-envtools
 ubox
