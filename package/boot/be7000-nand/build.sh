@@ -28,6 +28,9 @@ cmdline='console=ttyMSM0,115200n8 earlycon ubi.block=0,rootfs root=/dev/ubiblock
 ! grep -q be7000_pll_restart "$linux/drivers/clk/qcom/apss-ipq6018.c"
 test ! -e "$linux/drivers/rpmsg/qcom_glink_be7000.h"
 grep -q BE7000_CRASH_HEADER_SIZE "$linux/kernel/printk/be7000_persist.h"
+if ! grep -q CLK_SET_RATE_NO_REPARENT "$linux/drivers/clk/qcom/nsscc-qca8k.c"; then
+  patch --batch -d "$linux" -p1 <"$source_dir/target/linux/qualcommbe/patches-6.18/9518-clk-qcom-qca8k-preserve-phy-clock-parent.patch"
+fi
 if ! grep -q 'IS_REACHABLE(CONFIG_MTD_BLKDEVS)' "$linux/drivers/mtd/mtdcore.c"; then
   patch --batch -d "$linux" -p1 <"$pkg/patches/001-mtd-optional-blktrans.patch"
 fi
