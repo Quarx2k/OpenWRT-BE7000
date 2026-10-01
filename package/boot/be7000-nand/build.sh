@@ -58,7 +58,7 @@ cp -a "$source_dir/target/linux/qualcommbe/dts/." "$work/dts/"
 cp "$pkg/nand-buttons.dtsi" "$work/dts/"
 sed -i 's/"stock-/"/g' "$work/dts/ipq9574-be7000-nand.dtsi"
 cat >"$work/dts/nand.dts" <<EOF
-#include "ipq9574-be7000-native-mlo-nand.dts"
+#include "ipq9574-be7000-native-nand.dts"
 #include "nand-buttons.dtsi"
 / {
  model = "Xiaomi BE7000 (NAND)";
