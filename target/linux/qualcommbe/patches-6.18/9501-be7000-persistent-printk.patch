@@ -32,9 +32,9 @@ new file mode 100644
 index 0000000..8c2cfcc
 --- /dev/null
 +++ b/kernel/printk/be7000_persist.h
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,161 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
-+/* Included by printk.c: KXLG v1, retained across the Xiaomi kexec path. */
++/* Included by printk.c: KXLG v1, exported by Xiaomi U-Boot after a warm reset. */
 +#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_QCOM)
 +#include <linux/io.h>
 +#include <linux/libfdt.h>
@@ -44,6 +44,7 @@ index 0000000..8c2cfcc
 +
 +#define BE7000_LOG_PHYS 0x4fa00000ULL
 +#define BE7000_LOG_SIZE 0x40000
++#define BE7000_CRASH_HEADER_SIZE 0x1c
 +#define BE7000_LOG_DATA 0x40
 +#define BE7000_LOG_CAPACITY (BE7000_LOG_SIZE - BE7000_LOG_DATA)
 +
@@ -142,6 +143,7 @@ index 0000000..8c2cfcc
 +	if (!base)
 +		return;
 +	header = base + 0x20;
++	writel_relaxed(0, base);
 +	writel_relaxed(0, header);
 +	dsb(sy);
 +	writel_relaxed(1, header + 4);
@@ -153,11 +155,21 @@ index 0000000..8c2cfcc
 +	dsb(sy);
 +	writel_relaxed(0x474c584b, header);
 +	dsb(sy);
++	writel_relaxed(1, base + 4);
++	writel_relaxed(BE7000_LOG_SIZE - BE7000_CRASH_HEADER_SIZE, base + 8);
++	writel_relaxed(0, base + 12);
++	writel_relaxed(0, base + 16);
++	writel_relaxed(0, base + 20);
++	writel_relaxed(0, base + 24);
++	dsb(sy);
++	/* Commit last: U-Boot exports this buffer to the NAND crash partition. */
++	writel_relaxed(0x5ab5, base);
++	dsb(sy);
 +	WRITE_ONCE(be7000_log_base, base);
 +	prb_rec_init_rd(&record, &info, text, sizeof(text));
 +	prb_for_each_record(0, prb, seq, &record)
 +		be7000_printk_store(text, min_t(unsigned int, info.text_len, sizeof(text)));
-+	pr_info("BE7000 KXLG v1: early persistent printk active\n");
++	pr_info("BE7000 KXLG v1: early persistent printk active, Xiaomi crash export armed\n");
 +}
 +
 +static int __init be7000_printk_remap(void)
