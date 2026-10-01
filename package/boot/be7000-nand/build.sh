@@ -63,6 +63,9 @@ cat >"$work/dts/nand.dts" <<EOF
 / {
  model = "Xiaomi BE7000 (NAND)";
  compatible = "xiaomi,be7000-nand", "xiaomi,be7000", "qcom,ipq9574";
+ reserved-memory {
+  qcn9224_pcie2_mlo: mlo@57300000 { reg = <0 0x57300000 0 0x700000>; no-map; };
+ };
  leds { be7000,boot-animation; };
  chosen {
   bootargs = "";
@@ -73,6 +76,10 @@ cat >"$work/dts/nand.dts" <<EOF
  xiaomi,selectable-radio-mode;
  /delete-property/ qcom,board_id;
  /delete-property/ qcom,num-radios;
+ memory-region = <&qcn9224_pcie2>, <&qcn9224_pcie2_m3>,
+                 <&qcn9224_pcie2_caldb>, <&qcn9224_pcie2_pageable>,
+                 <&qcn9224_pcie2_mlo>;
+ memory-region-names = "qmi", "m3-dump", "caldb", "pageable", "mlo-global";
  rf-low-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
  rf-high-gpios = <&tlmm 7 GPIO_ACTIVE_HIGH>;
 };
