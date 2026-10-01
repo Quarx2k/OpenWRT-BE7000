@@ -16,6 +16,26 @@ Online updates from the server are available through **LuCI → System → Atten
 
 To preserve your scripts and other files during an update, add their paths to `/etc/sysupgrade.conf`.
 
+## Additional package repository
+
+```sh
+mkdir -p /etc/apk/keys /etc/apk/repositories.d
+wget -O /etc/apk/keys/be7000-packages.pem \
+  https://openwrt.quarx2k.dev/packages/keys/be7000-packages.pem
+. /etc/openwrt_release
+printf 'https://openwrt.quarx2k.dev/packages/%s/qualcommbe/ipq95xx/packages.adb\n' \
+  "$DISTRIB_REVISION" > /etc/apk/repositories.d/be7000.list
+apk update
+```
+
+<details>
+<summary>Available packages</summary>
+
+- **AmneziaWG** ([Slava-Shchipunov](https://github.com/Slava-Shchipunov/awg-openwrt)): `kmod-amneziawg`, `amneziawg-tools`, `luci-proto-amneziawg`, `luci-i18n-amneziawg-ru`.
+- **SSClash** ([zerolabnet](https://github.com/zerolabnet/SSClash)): `luci-app-ssclash`.
+
+</details>
+
 ## Building from source
 
 Use Linux or WSL2 with the OpenWrt build dependencies installed.

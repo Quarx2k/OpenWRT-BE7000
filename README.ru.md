@@ -16,6 +16,26 @@ OpenWrt **SNAPSHOT r36538+77-18304dd747** для Xiaomi BE7000 на базе **L
 
 Чтобы сохранить свои скрипты и другие файлы при обновлении, добавьте их пути в `/etc/sysupgrade.conf`.
 
+## Дополнительный репозиторий пакетов
+
+```sh
+mkdir -p /etc/apk/keys /etc/apk/repositories.d
+wget -O /etc/apk/keys/be7000-packages.pem \
+  https://openwrt.quarx2k.dev/packages/keys/be7000-packages.pem
+. /etc/openwrt_release
+printf 'https://openwrt.quarx2k.dev/packages/%s/qualcommbe/ipq95xx/packages.adb\n' \
+  "$DISTRIB_REVISION" > /etc/apk/repositories.d/be7000.list
+apk update
+```
+
+<details>
+<summary>Доступные пакеты</summary>
+
+- **AmneziaWG** ([Slava-Shchipunov](https://github.com/Slava-Shchipunov/awg-openwrt)): `kmod-amneziawg`, `amneziawg-tools`, `luci-proto-amneziawg`, `luci-i18n-amneziawg-ru`.
+- **SSClash** ([zerolabnet](https://github.com/zerolabnet/SSClash)): `luci-app-ssclash`.
+
+</details>
+
 ## Сборка из исходников
 
 Используйте Linux или WSL2 с установленными зависимостями для сборки OpenWrt.
