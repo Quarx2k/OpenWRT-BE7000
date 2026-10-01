@@ -16,3 +16,4 @@ while read -r name separator version; do
             printf 'BE7000_PINNED_PACKAGES += %s=%s\n' "$name" "$version" >> "$pins";;
     esac
 done < "$top/bin/targets/qualcommbe/ipq95xx/openwrt-qualcommbe-ipq95xx-xiaomi_be7000-native.manifest"
+bash "$top/scripts/package-feed/prepare-imagebuilder.sh" "$top" "$ib"

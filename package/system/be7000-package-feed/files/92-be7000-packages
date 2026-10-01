@@ -1,0 +1,6 @@
+#!/bin/sh
+. /etc/openwrt_release
+mkdir -p /etc/apk/repositories.d
+printf 'https://openwrt.quarx2k.dev/packages/%s/qualcommbe/ipq95xx/packages.adb\n' \
+    "$DISTRIB_REVISION" >/etc/apk/repositories.d/be7000.list
+exit 0

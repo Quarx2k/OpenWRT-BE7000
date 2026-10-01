@@ -2,6 +2,7 @@ apk-mbedtls
 base-files
 bash
 be7000-ath-board
+be7000-package-feed
 blkid
 block-mount
 busybox
