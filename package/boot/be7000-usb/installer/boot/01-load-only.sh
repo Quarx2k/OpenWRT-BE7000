@@ -151,10 +151,8 @@ strings "$ARCH_MODULE" |
 strings "$KEXEC" |
 	grep -q -- '--kernel-base=ADDR' ||
 	die "kexec binary has no guarded ARM64 forced-base support"
-grep -q 'reverse module quiesce pass' "$BASE_DIR/02-quiesce-stage2.sh" ||
-	die "stage-2 script has no reverse-order module teardown"
-grep -q 'qca_nss_eip|qca_nss_ppe|qca_ssdk' "$BASE_DIR/02-quiesce-stage2.sh" ||
-	die "stage-2 script does not protect the non-unloadable EIP/PPE/SSDK chain"
+grep -q 'selective hardware teardown armed' "$BASE_DIR/02-quiesce-stage2.sh" ||
+	die "selective hardware teardown script is absent"
 grep -q ' [Tt] freeze_processes$' /proc/kallsyms 2>/dev/null ||
 	die "original kernel does not expose freeze_processes through kallsyms"
 grep -q ' [Tt] smp_call_function_single$' /proc/kallsyms 2>/dev/null ||
@@ -284,7 +282,7 @@ EXPECTED_PURGATORY=$2
 	echo "module_device_abi=stock-driver-104:stock-driver-data-120"
 	echo "pci_bus_master_quiesce=post-device-shutdown"
 	echo "wlan_quiesce=vendor-wifi-unload-required"
-	echo "module_quiesce=reverse-load-order:eip-ppe-ssdk-protected"
+	echo "module_quiesce=selective-hardware:eip-ppe-ssdk-protected"
 	echo "cmdline=$FINAL_CMDLINE"
 	echo "image_bytes=$(wc -c < "$IMAGE")"
 	echo "core_module_bytes=$(wc -c < "$CORE_MODULE")"

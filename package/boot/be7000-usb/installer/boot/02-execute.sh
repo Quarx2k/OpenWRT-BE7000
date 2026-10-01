@@ -130,8 +130,8 @@ grep -q '^pci_bus_master_quiesce=post-device-shutdown$' "$BASE_DIR/loaded-state.
 	die "post-shutdown PCI bus-master quiesce was not loaded"
 grep -q '^wlan_quiesce=vendor-wifi-unload-required$' "$BASE_DIR/loaded-state.txt" ||
 	die "vendor WLAN/remoteproc quiesce was not armed"
-grep -q '^module_quiesce=reverse-load-order:eip-ppe-ssdk-protected$' "$BASE_DIR/loaded-state.txt" ||
-	die "reverse-order module teardown was not armed"
+grep -q '^module_quiesce=selective-hardware:eip-ppe-ssdk-protected$' "$BASE_DIR/loaded-state.txt" ||
+	die "selective hardware teardown was not armed"
 # Direct physical-memory reads are intentionally forbidden after the RPM
 # message-RAM /dev/mem incident.  01-load-only verified v4.3 through module
 # metadata and successful module initialization.
@@ -185,10 +185,8 @@ fi
 strings "$BASE_DIR/kexec_mod.ko" |
 	grep -q 'PCI quiesce inspected' ||
 	die "package core module cannot clear PCI bus mastering"
-grep -q 'reverse module quiesce pass' "$BASE_DIR/02-quiesce-stage2.sh" ||
-	die "package stage-2 script has no reverse-order module teardown"
-grep -q 'qca_nss_eip|qca_nss_ppe|qca_ssdk' "$BASE_DIR/02-quiesce-stage2.sh" ||
-	die "package stage-2 script does not protect EIP/PPE/SSDK"
+grep -q 'selective hardware teardown armed' "$BASE_DIR/02-quiesce-stage2.sh" ||
+	die "selective hardware teardown script is absent"
 
 STAMP=$(date '+%Y%m%d-%H%M%S')
 PERSIST_LOG="/data/usr/log/kexec-quiesce-linux612-v@RUN@-$STAMP.log"
@@ -258,7 +256,7 @@ fi
 	echo "kexec_loaded: $(cat /sys/kernel/kexec_loaded)"
 	echo "usb_mount: $USB_MOUNT"
 	echo "persistent_log: $PERSIST_LOG"
-	echo "action: service/WLAN/remoteproc quiesce, reverse-order module unload with EIP/PPE/SSDK retained, USB detach, sync, read-only remount, device/PCI shutdown, serialize RPM GLINK, park CPU1-3 in the physical spin-table pen, then kexec"
+	echo "action: vendor WLAN shutdown, selective Ethernet and USB module unload, sync, then kexec"
 	echo "purgatory_checks: disabled for this diagnostic run"
 	echo "watchdog_before: $(echo "$WATCHDOG_STATE" | tr '\n' ' ')"
 } > "$ARM_LOG"
@@ -270,6 +268,7 @@ echo "quiescing" > "$PHASE_FILE"
 	"$TMP_KEXEC" "$PERSIST_LOG" "$USB_MOUNT" "$PHASE_FILE" "$PID_FILE" "$$"
 ARMED=1
 
-echo "Hardware teardown and kexec worker started."
+
+echo "Selective hardware teardown and kexec worker started."
 echo "After the phase changes to 'quiescing', do not interrupt power manually."
 echo "Persistent progress log: $PERSIST_LOG"

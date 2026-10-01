@@ -1,418 +1,131 @@
 #!/bin/bash
-
 set -u
 umask 077
 trap '' HUP
-
-KEXEC_BIN=${1:?missing temporary kexec binary}
-PERSIST_LOG=${2:?missing persistent log path}
+KEXEC_BIN=${1:?}
+PERSIST_LOG=${2:?}
 USB_MOUNT=${3:-none}
 PHASE_FILE=${4:-/tmp/be7000-kexec-quiesce.phase}
-PID_FILE=${5:-/tmp/be7000-kexec-quiesce.pid}
-TMP_LOG="/tmp/be7000-kexec-quiesce-stage2.log"
-
-if [ -r "$PERSIST_LOG" ]; then
-	cp "$PERSIST_LOG" "$TMP_LOG" 2>/dev/null || : > "$TMP_LOG"
-else
-	: > "$TMP_LOG"
-fi
-cd /tmp || exit 1
+TMP_LOG=/tmp/be7000-kexec-quiesce-stage2.log
+cp "$PERSIST_LOG" "$TMP_LOG" || exit 1
 exec </dev/null >> "$TMP_LOG" 2>&1
-
+cd /tmp || exit 1
 log()
 {
-	LINE="$(date -Iseconds 2>/dev/null || date) $*"
-	echo "$LINE" >> "$TMP_LOG"
-	echo "$LINE" > /dev/console 2>/dev/null || true
+    printf '%s %s\n' "$(date -Iseconds)" "$*" >> "$TMP_LOG"
 }
-
-persist_log()
+abort()
 {
-	cp "$TMP_LOG" "$PERSIST_LOG" 2>/dev/null || true
-	sync
+    log "$*; staying in stock"
+    echo failed:quiesce > "$PHASE_FILE"
+    cp "$TMP_LOG" "$PERSIST_LOG"
+    sync
+    exit 1
 }
-
-stop_service()
+unload_tree()
 {
-	SERVICE=$1
-	[ -x "/etc/init.d/$SERVICE" ] || return 0
-	log "stopping service: $SERVICE"
-	/usr/bin/timeout -t 20 "/etc/init.d/$SERVICE" stop >> "$TMP_LOG" 2>&1 ||
-		log "service stop returned nonzero or timed out: $SERVICE"
+    local module=$1 holder
+    case "$module" in qca_nss_eip|qca_nss_ppe|qca_ssdk) abort "protected dependency: $module";; esac
+    [ -d "/sys/module/$module" ] || return 0
+    for holder in "/sys/module/$module/holders/"*; do
+        [ -e "$holder" ] || continue
+        unload_tree "${holder##*/}"
+    done
+    log "unloading hardware module: $module"
+    /usr/bin/timeout -t 12 rmmod "$module" >> "$TMP_LOG" 2>&1 || abort "module unload failed: $module"
 }
-
-module_is_protected()
-{
-	case "$1" in
-		kexec_mod|kexec_mod_arm64|dm_crypt|dm_req_crypt|dm_mirror|dm_region_hash|dm_log|qca_nss_eip|qca_nss_ppe|qca_ssdk)
-			return 0
-			;;
-	esac
-	return 1
-}
-
-module_holders()
-{
-	HOLDER_MODULE=$1
-	for HOLDER_PATH in "/sys/module/$HOLDER_MODULE/holders"/*; do
-		[ -e "$HOLDER_PATH" ] || continue
-		echo "${HOLDER_PATH##*/}"
-	done | sort | tr '\n' ','
-}
-
-module_refcnt()
-{
-	cat "/sys/module/$1/refcnt" 2>/dev/null || echo unknown
-}
-
-eip_irq_total()
-{
-	awk '
-	/eip_irq_ring_/ {
-		for (field = 2; field <= NF; field++) {
-			if ($field !~ /^[0-9]+$/)
-				break
-			total += $field
-		}
-	}
-	END { print total + 0 }
-	' /proc/interrupts 2>/dev/null
-}
-
-unload_one_module()
-{
-	UNLOAD_MODULE=$1
-	[ -d "/sys/module/$UNLOAD_MODULE" ] || return 1
-	module_is_protected "$UNLOAD_MODULE" && return 1
-
-	UNLOAD_LOG="/tmp/be7000-rmmod-$UNLOAD_MODULE.log"
-	if /usr/bin/timeout -t 12 rmmod "$UNLOAD_MODULE" > "$UNLOAD_LOG" 2>&1; then
-		log "module unloaded: $UNLOAD_MODULE"
-		rm -f "$UNLOAD_LOG"
-		return 0
-	else
-		UNLOAD_RC=$?
-	fi
-	if [ "$UNLOAD_RC" -eq 124 ] || [ "$UNLOAD_RC" -eq 137 ]; then
-		log "module unload timed out: $UNLOAD_MODULE rc=$UNLOAD_RC"
-	fi
-	rm -f "$UNLOAD_LOG"
-	return 1
-}
-
-flush_runtime_network_state()
-{
-	log "flushing runtime packet-filter and qdisc state before module teardown"
-	for TOOL in iptables ip6tables; do
-		command -v "$TOOL" >/dev/null 2>&1 || continue
-		for TABLE in raw mangle nat filter; do
-			"$TOOL" -t "$TABLE" -F >/dev/null 2>&1 || true
-			"$TOOL" -t "$TABLE" -X >/dev/null 2>&1 || true
-		done
-	done
-	if command -v ebtables >/dev/null 2>&1; then
-		for TABLE in broute nat filter; do
-			ebtables -t "$TABLE" -F >/dev/null 2>&1 || true
-			ebtables -t "$TABLE" -X >/dev/null 2>&1 || true
-		done
-	fi
-	if command -v nft >/dev/null 2>&1; then
-		nft flush ruleset >/dev/null 2>&1 || true
-	fi
-	if command -v ipset >/dev/null 2>&1; then
-		ipset flush >/dev/null 2>&1 || true
-		ipset destroy >/dev/null 2>&1 || true
-	fi
-	ip xfrm policy flush >/dev/null 2>&1 || true
-	ip xfrm state flush >/dev/null 2>&1 || true
-	if command -v tc >/dev/null 2>&1; then
-		for IFACE_PATH in /sys/class/net/*; do
-			[ -e "$IFACE_PATH" ] || continue
-			IFACE_NAME=${IFACE_PATH##*/}
-			[ "$IFACE_NAME" = "lo" ] && continue
-			tc qdisc del dev "$IFACE_NAME" root >/dev/null 2>&1 || true
-			tc qdisc del dev "$IFACE_NAME" ingress >/dev/null 2>&1 || true
-		done
-	fi
-	for IFACE_PATH in /sys/class/net/*; do
-		[ -e "$IFACE_PATH" ] || continue
-		IFACE_NAME=${IFACE_PATH##*/}
-		[ "$IFACE_NAME" = "lo" ] && continue
-		ip link set dev "$IFACE_NAME" down >/dev/null 2>&1 || true
-	done
-	for VIRTUAL_IFACE in bond0 br-lan br-guest utun tun0; do
-		ip link delete "$VIRTUAL_IFACE" >/dev/null 2>&1 || true
-	done
-}
-
-reverse_module_quiesce()
-{
-	flush_runtime_network_state
-	MODULES_BEFORE_REVERSE=$(wc -l < /proc/modules)
-	log "modules loaded before reverse-order unload: $MODULES_BEFORE_REVERSE"
-	log "/proc/modules is newest-first in this kernel; using it as reverse load order"
-	log "protected non-unloadable chain: qca_nss_eip -> qca_nss_ppe -> qca_ssdk"
-	cat /proc/modules >> "$TMP_LOG" 2>&1 || true
-
-	MODULE_PASS=1
-	while [ "$MODULE_PASS" -le 8 ]; do
-		# kernel/module.c inserts each new module at the list head, and
-		# /proc/modules walks that list from its head.  Each snapshot therefore
-		# is the exact reverse of successful load order for the remaining set.
-		awk '{print $1}' /proc/modules > "/tmp/be7000-modules-pass-$MODULE_PASS.txt"
-		PASS_UNLOADED=0
-		while IFS= read -r UNLOAD_MODULE; do
-			if unload_one_module "$UNLOAD_MODULE"; then
-				PASS_UNLOADED=$((PASS_UNLOADED + 1))
-			fi
-		done < "/tmp/be7000-modules-pass-$MODULE_PASS.txt"
-		rm -f "/tmp/be7000-modules-pass-$MODULE_PASS.txt"
-		log "reverse module quiesce pass $MODULE_PASS unloaded $PASS_UNLOADED modules"
-		[ "$PASS_UNLOADED" -gt 0 ] || break
-		MODULE_PASS=$((MODULE_PASS + 1))
-	done
-
-	log "modules remaining after reverse-order unload:"
-	cat /proc/modules >> "$TMP_LOG" 2>&1 || true
-	log "interrupts remaining after reverse-order unload:"
-	cat /proc/interrupts >> "$TMP_LOG" 2>&1 || true
-
-	awk '{print $1}' /proc/modules > /tmp/be7000-module-names-final.txt
-	MODULE_QUIESCE_OK=1
-	while IFS= read -r REMAINING_MODULE; do
-		case "$REMAINING_MODULE" in
-			qca_nss_eip|qca_nss_ppe|qca_ssdk)
-				REMAINING_HOLDERS=$(module_holders "$REMAINING_MODULE")
-				REMAINING_REFCNT=$(module_refcnt "$REMAINING_MODULE")
-				log "known protected module remains: $REMAINING_MODULE refcnt=$REMAINING_REFCNT holders=${REMAINING_HOLDERS:-none}"
-				;;
-			ecm*|qca_nss_*|qca_mcs|emesh_sp|ipq_cnss2|qca_ol|wifi_3_0|umac|qdf|mem_manager)
-				REMAINING_HOLDERS=$(module_holders "$REMAINING_MODULE")
-				REMAINING_REFCNT=$(module_refcnt "$REMAINING_MODULE")
-				log "DMA-critical module remains loaded: $REMAINING_MODULE refcnt=$REMAINING_REFCNT holders=${REMAINING_HOLDERS:-none}"
-				MODULE_QUIESCE_OK=0
-				;;
-		esac
-	done < /tmp/be7000-module-names-final.txt
-
-	for REQUIRED_RESIDUAL in qca_nss_eip qca_nss_ppe qca_ssdk; do
-		if [ ! -d "/sys/module/$REQUIRED_RESIDUAL" ]; then
-			log "expected protected residual is unexpectedly absent: $REQUIRED_RESIDUAL"
-			MODULE_QUIESCE_OK=0
-		fi
-	done
-
-	EIP_HOLDERS=$(module_holders qca_nss_eip)
-	PPE_HOLDERS=$(module_holders qca_nss_ppe)
-	SSDK_HOLDERS=$(module_holders qca_ssdk)
-	EIP_REFCNT=$(module_refcnt qca_nss_eip)
-	PPE_REFCNT=$(module_refcnt qca_nss_ppe)
-	SSDK_REFCNT=$(module_refcnt qca_ssdk)
-	if [ -n "$EIP_HOLDERS" ] || [ "$EIP_REFCNT" != "0" ]; then
-		log "unexpected EIP residual state: refcnt=$EIP_REFCNT holders=${EIP_HOLDERS:-none}"
-		MODULE_QUIESCE_OK=0
-	fi
-	if [ "$PPE_HOLDERS" != "qca_nss_eip," ]; then
-		log "unexpected PPE residual state: refcnt=$PPE_REFCNT holders=${PPE_HOLDERS:-none}"
-		MODULE_QUIESCE_OK=0
-	fi
-	if [ "$SSDK_HOLDERS" != "qca_nss_ppe," ]; then
-		log "unexpected SSDK residual state: refcnt=$SSDK_REFCNT holders=${SSDK_HOLDERS:-none}"
-		MODULE_QUIESCE_OK=0
-	fi
-
-	if grep -qE 'edma_(txcmpl|rxdesc|misc)' /proc/interrupts 2>/dev/null; then
-		log "EDMA interrupt handlers remain registered"
-		MODULE_QUIESCE_OK=0
-	else
-		log "EDMA interrupt handlers are absent"
-	fi
-
-	log "EIP ring state retained for audit:"
-	for EIP_RING in /sys/kernel/debug/qca-nss-eip/eip197/ring_*; do
-		[ -r "$EIP_RING" ] || continue
-		echo "[$EIP_RING]" >> "$TMP_LOG"
-		cat "$EIP_RING" >> "$TMP_LOG" 2>&1 || true
-	done
-	EIP_IRQ_BEFORE=$(eip_irq_total)
-	sleep 1
-	EIP_IRQ_AFTER=$(eip_irq_total)
-	log "EIP IRQ total idle check: before=$EIP_IRQ_BEFORE after=$EIP_IRQ_AFTER"
-	if [ "$EIP_IRQ_BEFORE" != "$EIP_IRQ_AFTER" ]; then
-		log "EIP interrupt count changed during idle check"
-		MODULE_QUIESCE_OK=0
-	fi
-
-	[ "$MODULE_QUIESCE_OK" -eq 1 ] ||
-		abort_to_stock "unexpected DMA module, holder, reference, or interrupt activity"
-	log "reverse teardown verified: removable DMA modules and EDMA are absent; idle EIP->PPE->SSDK residual retained"
-}
-
-abort_to_stock()
-{
-	REASON=$*
-	echo "failed:quiesce" > "$PHASE_FILE"
-	log "critical quiesce verification failed: $REASON"
-	log "forcing ordinary original reboot; kexec will not be called"
-	persist_log
-	/sbin/reboot -f
-	while :; do sleep 60; done
-}
-
-log "stage 2 armed; waiting for launcher to exit"
+log 'selective hardware teardown armed; no cancellation delay'
 while [ -n "${6:-}" ] && kill -0 "$6" 2>/dev/null; do
-	sleep 0.1
+    sleep 0.1
 done
-
 trap '' TERM INT
-echo "quiescing" > "$PHASE_FILE"
-log "quiescing started"
-if [ -x /etc/init.d/indexservice.init ]; then
-	log "stopping USB index service"
-	/usr/bin/timeout -t 20 /etc/init.d/indexservice.init stop >> "$TMP_LOG" 2>&1 ||
-		abort_to_stock "USB index service stop failed"
-fi
-
-# High-I/O and event-generating user services. Autostart settings are untouched.
-for SERVICE in \
-	messagingagent.sh miwifi-discovery cab_meshd miwifi-roam \
-	trafficd datacenter smartcontroller baidupan \
-	filetunnel stunserver topomon pluginmanager xq_info_sync_mqtt \
-	mobile_accel miqos miot mosquitto tbusd netapi wan_check iweventd \
-	miniupnpd samba afpd nginx cron telnet dnsmasq odhcpd rpcd cnss_diag
-do
-	stop_service "$SERVICE"
+echo quiescing > "$PHASE_FILE"
+log 'stopping network and WLAN services'
+for SERVICE in network qca-hostapd qca-wpa-supplicant cnss_diag; do
+    [ -x "/etc/init.d/$SERVICE" ] || continue
+    /usr/bin/timeout -t 20 "/etc/init.d/$SERVICE" stop >> "$TMP_LOG" 2>&1 || log "service stop returned nonzero: $SERVICE"
 done
-
-# Stop interfaces only after network consumers are gone. The detached worker
-# continues locally after SSH and LAN disappear.
-stop_service network
-stop_service qca-hostapd
-stop_service qca-wpa-supplicant
-
-# The stock kernel has CONFIG_KEXEC_CORE disabled, so PCI core shutdown does
-# not clear bus mastering.  First use Qualcomm's own WLAN teardown path: it
-# unregisters qca_ol and calls rproc_shutdown() for WCSS and the PCI QCN9224.
-# Never force remoteproc sysfs state here: if the vendor teardown cannot prove
-# both processors offline, fall back to an ordinary reset instead of kexec.
-log "stopping cnssdaemon before vendor WLAN teardown"
 killall -TERM cnssdaemon 2>/dev/null || true
-sleep 2
+for LEFT in 1 2; do
+    pidof cnssdaemon >/dev/null || break
+    sleep 1
+done
 killall -KILL cnssdaemon 2>/dev/null || true
-
-[ -x /sbin/wifi ] || abort_to_stock "vendor /sbin/wifi helper is absent"
-log "running vendor WLAN module teardown: /sbin/wifi unload"
-if /usr/bin/timeout -t 60 /sbin/wifi unload >> "$TMP_LOG" 2>&1; then
-	WIFI_UNLOAD_RC=0
-else
-	WIFI_UNLOAD_RC=$?
-	log "vendor wifi unload returned rc=$WIFI_UNLOAD_RC; checking actual state"
-fi
-sleep 3
-
-WLAN_QUIESCE_OK=1
-for WLAN_MODULE in qca_ol wifi_3_0; do
-	if [ -d "/sys/module/$WLAN_MODULE" ]; then
-		log "WLAN module is still loaded: $WLAN_MODULE"
-		WLAN_QUIESCE_OK=0
-	else
-		log "WLAN module is absent as required: $WLAN_MODULE"
-	fi
+log 'unloading vendor WLAN'
+/usr/bin/timeout -t 60 /sbin/wifi unload >> "$TMP_LOG" 2>&1 || log 'wifi unload returned nonzero; checking state'
+for MODULE in qca_ol wifi_3_0; do
+    [ ! -d "/sys/module/$MODULE" ] || abort "WLAN module remains: $MODULE"
 done
-
 for RPROC in remoteproc0 remoteproc1; do
-	STATE_FILE="/sys/class/remoteproc/$RPROC/state"
-	if [ ! -r "$STATE_FILE" ]; then
-		log "remoteproc state is unavailable: $RPROC"
-		WLAN_QUIESCE_OK=0
-		continue
-	fi
-	RPROC_STATE=$(cat "$STATE_FILE" 2>/dev/null || echo unreadable)
-	log "$RPROC state after WLAN unload: $RPROC_STATE"
-	[ "$RPROC_STATE" = "offline" ] || WLAN_QUIESCE_OK=0
+    STATE=$(cat "/sys/class/remoteproc/$RPROC/state" 2>/dev/null)
+    log "$RPROC state: $STATE"
+    [ "$STATE" = offline ] || abort "$RPROC is not offline"
 done
-
-[ "$WLAN_QUIESCE_OK" -eq 1 ] ||
-	abort_to_stock "WLAN modules or Qualcomm remoteprocs remain active"
-log "vendor WLAN teardown verified: WCSS and QCN9224 remoteprocs are offline"
-
-stop_service dropbear
-
-# Remove any residual instances whose vendor init scripts did not stop cleanly.
-for PROCESS in \
-	lua mihomo messagingagent trafficd indexservice datacenter netapi \
-	wan_detect wan_check_status iwevent iwevent-call cab_meshd miwifi-roam \
-	miniupnpd dnsmasq odhcpd nginx fcgi-cgi smbd nmbd crond pppd odhcp6c \
-	hostapd wpa_supplicant cnssdaemon
-do
-	killall -TERM "$PROCESS" 2>/dev/null || true
+for IFACE_PATH in /sys/class/net/*; do
+    IFACE=${IFACE_PATH##*/}
+    [ "$IFACE" = lo ] && continue
+    tc qdisc del dev "$IFACE" root >/dev/null 2>&1 || true
+    tc qdisc del dev "$IFACE" ingress >/dev/null 2>&1 || true
+    ip link set dev "$IFACE" down >/dev/null 2>&1 || true
 done
-killall -TERM dropbear 2>/dev/null || true
-sleep 3
-for PROCESS in \
-	lua mihomo messagingagent trafficd indexservice datacenter netapi \
-	wan_detect wan_check_status iwevent iwevent-call cab_meshd miwifi-roam \
-	miniupnpd dnsmasq odhcpd nginx fcgi-cgi smbd nmbd crond pppd odhcp6c \
-	hostapd wpa_supplicant cnssdaemon
-do
-	killall -KILL "$PROCESS" 2>/dev/null || true
+for IFACE in bond0 br-lan br-guest utun tun0; do
+    ip link delete "$IFACE" >/dev/null 2>&1 || true
 done
-killall -KILL dropbear 2>/dev/null || true
-
-# The image and executor are already in RAM/tmpfs, so USB is no longer needed.
-if [ "$USB_MOUNT" != "none" ]; then
-	log "unmounting USB: $USB_MOUNT"
-	if ! /usr/bin/timeout -t 20 umount "$USB_MOUNT" >> "$TMP_LOG" 2>&1; then
-		log "USB unmount failed; syncing and using lazy unmount"
-		sync
-		umount -l "$USB_MOUNT" >> "$TMP_LOG" 2>&1 || {
-			log "lazy unmount failed; attempting read-only remount"
-			mount -o remount,ro "$USB_MOUNT" >> "$TMP_LOG" 2>&1 || true
-		}
-	fi
+awk '{print $1}' /proc/modules > /tmp/be7000-hardware-modules.txt
+while IFS= read -r MODULE; do
+    case "$MODULE" in
+        qca_nss_eip|qca_nss_ppe|qca_ssdk) continue;;
+        ecm*|qca_nss_*|qca_mcs|emesh_sp|ipq_cnss2|umac|qdf|mem_manager) unload_tree "$MODULE";;
+    esac
+done < /tmp/be7000-hardware-modules.txt
+if grep -qE 'edma_(txcmpl|rxdesc|misc)' /proc/interrupts; then
+    abort 'EDMA interrupt handlers remain'
 fi
-
-awk '{print $1}' /proc/modules > /tmp/be7000-module-names-before-reverse.txt
-reverse_module_quiesce
-
-stop_service syslog-ng
-sleep 5
-
-log "remaining processes before kernel freezer:"
-ps w >> "$TMP_LOG" 2>&1 || true
-log "syncing all writable filesystems"
-sync
-echo s > /proc/sysrq-trigger
-sleep 2
-
-log "requesting emergency read-only remount"
-persist_log
-echo "transition" > "$PHASE_FILE"
-echo u > /proc/sysrq-trigger
+for MODULE in qca_nss_eip qca_nss_ppe qca_ssdk; do
+    for HOLDER in "/sys/module/$MODULE/holders/"*; do
+        [ -e "$HOLDER" ] || continue
+        case "$MODULE:${HOLDER##*/}" in qca_nss_ppe:qca_nss_eip|qca_ssdk:qca_nss_ppe) ;; *) abort "unexpected holder: $HOLDER";; esac
+    done
+done
+[ "$(cat /sys/module/qca_nss_eip/refcnt)" = 0 ] || abort 'EIP is still in use'
+IRQ_BEFORE=$(awk '/eip_irq_ring_/ { for(i=2; i<=NF && $i ~ /^[0-9]+$/; i++) n+=$i } END {print n+0}' /proc/interrupts)
 sleep 1
-
-# Reset the Qualcomm watchdog countdown immediately before the kernel call.
-# It remains enabled as a 32-second recovery path if relocation/purgatory hangs.
-log "rearming hardware watchdog to 32 seconds for transition recovery"
-WDT_REPLY=$(ubus call system watchdog \
-	'{"timeout":32,"frequency":1}' 2>&1 || true)
-echo "$WDT_REPLY" >> "$TMP_LOG"
-if ! echo "$WDT_REPLY" | grep -q '"status":[[:space:]]*"running"'; then
-	echo "failed:watchdog" > "$PHASE_FILE"
-	log "watchdog rearm failed; forcing ordinary reboot instead of kexec"
-	/sbin/reboot -f
-	while :; do sleep 60; done
+IRQ_AFTER=$(awk '/eip_irq_ring_/ { for(i=2; i<=NF && $i ~ /^[0-9]+$/; i++) n+=$i } END {print n+0}' /proc/interrupts)
+[ "$IRQ_BEFORE" = "$IRQ_AFTER" ] || abort 'EIP interrupts are active'
+log 'WLAN and Ethernet teardown verified'
+if [ -x /etc/init.d/indexservice.init ]; then
+    log 'stopping USB index service'
+    /usr/bin/timeout -t 20 /etc/init.d/indexservice.init stop >> "$TMP_LOG" 2>&1 || abort 'USB index service stop failed'
 fi
-
-log "calling fixed kexec module; it will freeze remaining userspace"
+sync
+if [ "$USB_MOUNT" != none ]; then
+    log "unmounting USB: $USB_MOUNT"
+    /usr/bin/timeout -t 20 umount "$USB_MOUNT" >> "$TMP_LOG" 2>&1 || abort 'USB unmount failed'
+fi
+for MODULE in g_diag diagchar usb_f_diag libcomposite usb_storage xhci_plat_hcd xhci_pci xhci_hcd ehci_platform ehci_hcd dwc3_qcom dwc3; do
+    [ -d "/sys/module/$MODULE" ] || continue
+    log "unloading USB module: $MODULE"
+    /usr/bin/timeout -t 12 rmmod "$MODULE" >> "$TMP_LOG" 2>&1 || abort "USB module unload failed: $MODULE"
+    [ ! -d "/sys/module/$MODULE" ] || abort "USB module remains: $MODULE"
+done
+echo transition > "$PHASE_FILE"
+WDT_REPLY=$(ubus call system watchdog '{"timeout":32,"frequency":1}' 2>&1 || true)
+printf '%s\n' "$WDT_REPLY" >> "$TMP_LOG"
+if ! echo "$WDT_REPLY" | grep -q '"status":[[:space:]]*"running"'; then
+    echo failed:watchdog > "$PHASE_FILE"
+    log 'watchdog rearm failed; staying in stock'
+    cp "$TMP_LOG" "$PERSIST_LOG"
+    sync
+    exit 1
+fi
+log 'WLAN, Ethernet and USB teardown complete; calling kexec after sync'
+cat /proc/uptime >> "$TMP_LOG"
+cp "$TMP_LOG" "$PERSIST_LOG"
+sync
 "$KEXEC_BIN" -e
 RC=$?
-
-# freeze_processes() thaws automatically when it fails before shutdown.
 echo "failed:$RC" > "$PHASE_FILE"
-log "kexec returned unexpectedly with rc=$RC; forcing ordinary reboot"
-mount -o remount,rw /data >/dev/null 2>&1 || true
-persist_log
+log "kexec returned rc=$RC; rebooting to stock"
+cp "$TMP_LOG" "$PERSIST_LOG"
+sync
 /sbin/reboot -f
-
-while :; do sleep 60; done
