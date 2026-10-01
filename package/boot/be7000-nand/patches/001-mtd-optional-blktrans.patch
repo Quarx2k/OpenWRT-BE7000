@@ -1,0 +1,6 @@
+--- a/drivers/mtd/mtdcore.c
++++ b/drivers/mtd/mtdcore.c
+@@ -1182,1 +1182,2 @@
+-	register_mtd_blktrans_devs();
++	if (IS_REACHABLE(CONFIG_MTD_BLKDEVS))
++		register_mtd_blktrans_devs();

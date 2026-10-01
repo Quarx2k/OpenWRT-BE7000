@@ -1,0 +1,16 @@
+--- a/drivers/leds/leds-gpio.c
++++ b/drivers/leds/leds-gpio.c
+@@ -354,1 +354,12 @@
+-module_platform_driver(gpio_led_driver);
++static int __init gpio_led_init(void)
++{
++	return platform_driver_register(&gpio_led_driver);
++}
++subsys_initcall(gpio_led_init);
++
++static void __exit gpio_led_exit(void)
++{
++	platform_driver_unregister(&gpio_led_driver);
++}
++module_exit(gpio_led_exit);
++

@@ -1,0 +1,6 @@
+#!/bin/sh /etc/rc.common
+START=99
+
+boot() {
+	/usr/libexec/be7000-nand-env confirm || logger -t be7000-nand 'Boot confirmation failed; environment was not confirmed'
+}

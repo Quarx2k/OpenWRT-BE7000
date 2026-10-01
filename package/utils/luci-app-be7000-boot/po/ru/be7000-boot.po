@@ -1,0 +1,25 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+
+msgid "Reboot into Xiaomi"
+msgstr "Перезагрузить в Xiaomi"
+
+msgid "Could not update boot settings."
+msgstr "Не удалось изменить настройки загрузки."
+
+msgid "The USB drive can stay connected. OpenWrt autostart will be skipped once."
+msgstr "USB-накопитель можно оставить подключённым. Автозапуск OpenWrt будет пропущен один раз."
+
+msgid "The next boot will stay in Xiaomi firmware."
+msgstr "При следующей загрузке роутер останется в прошивке Xiaomi."
+
+msgid "Reboot the router now?"
+msgstr "Перезагрузить роутер сейчас?"
+
+msgid "Could not reboot the router."
+msgstr "Не удалось перезагрузить роутер."
+
+msgid "Reconnect to Xiaomi firmware at its configured LAN address."
+msgstr "Подключитесь к прошивке Xiaomi по её настроенному LAN-адресу."

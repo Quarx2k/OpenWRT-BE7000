@@ -1,0 +1,51 @@
+#!/bin/bash
+set -eu
+
+fail() { echo "$*" >&2; exit 1; }
+
+directory=
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in be7000_usb_dir=*) directory=${arg#*=};; esac
+done
+case "$directory" in ''|*[!a-zA-Z0-9._-]*|.|..) fail 'Not running from a BE7000 USB installation.';; esac
+base=/mnt/usb/$directory
+state=$base/boot
+awk '$2=="/mnt/usb" && $3=="ext4" && $4 ~ /(^|,)rw(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
+    fail 'The USB installation is not writable.'
+[[ ! -L $base && ! -L $state && ! -L $state/start.sh && -f $state/start.sh ]] ||
+    fail 'USB boot script not found.'
+
+case "${1:-status}" in
+status)
+    once=false
+    [[ ! -f $state/xiaomi-once ]] || once=true
+    printf '{"xiaomi_once":%s}\n' "$once"
+    ;;
+xiaomi-once)
+    if ! grep -q '^be7000_xiaomi_once=' "$state/start.sh"; then
+        next=$(mktemp "$state/.start.XXXXXX")
+        trap 'rm -f "$next"' EXIT
+        {
+            head -n 1 "$state/start.sh"
+            cat <<'EOF'
+be7000_xiaomi_once=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
+if [ -f "$be7000_xiaomi_once/xiaomi-once" ]; then
+    rm -f "$be7000_xiaomi_once/xiaomi-once" "$be7000_xiaomi_once/boot-pending" || exit 1
+    sync
+    echo 'OpenWrt autostart skipped once; staying in Xiaomi firmware.'
+    exit 0
+fi
+unset be7000_xiaomi_once
+EOF
+            tail -n +2 "$state/start.sh"
+        } > "$next"
+        sh -n "$next"
+        chmod 755 "$next"
+        mv -f "$next" "$state/start.sh"
+        trap - EXIT
+    fi
+    touch "$state/xiaomi-once"
+    sync
+    ;;
+*) fail 'Usage: be7000-boot [status|xiaomi-once]';;
+esac

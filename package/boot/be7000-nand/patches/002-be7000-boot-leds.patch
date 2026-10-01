@@ -1,0 +1,55 @@
+--- a/drivers/leds/leds-gpio.c
++++ b/drivers/leds/leds-gpio.c
+@@ -7,6 +7,7 @@
+  * Copyright (C) 2008 Freescale Semiconductor, Inc.
+  */
+ #include <linux/container_of.h>
++#include <linux/delay.h>
+ #include <linux/device.h>
+ #include <linux/err.h>
+ #include <linux/gpio.h>
+@@ -253,6 +254,34 @@
+ 	return gpiod;
+ }
+ 
++static void be7000_boot_animation(struct gpio_leds_priv *priv)
++{
++	static const char * const order[] = {
++		"white:system", "white:network", "white:antenna",
++		"white:antenna", "white:network", "white:system",
++	};
++	unsigned int step, i;
++
++	for (i = 0; i < priv->num_leds; i++)
++		gpio_led_set(&priv->leds[i].cdev, LED_OFF);
++	for (step = 0; step < ARRAY_SIZE(order); step++) {
++		if (step == 3)
++			msleep(180);
++		for (i = 0; i < priv->num_leds; i++) {
++			struct led_classdev *led = &priv->leds[i].cdev;
++
++			if (strcmp(led->name, order[step]))
++				continue;
++			gpio_led_set(led, LED_FULL);
++			msleep(120);
++			gpio_led_set(led, LED_OFF);
++			msleep(80);
++		}
++	}
++	for (i = 0; i < priv->num_leds; i++)
++		gpio_led_set(&priv->leds[i].cdev, priv->leds[i].cdev.brightness);
++}
++
+ static int gpio_led_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -295,6 +324,9 @@
+ 
+ 	platform_set_drvdata(pdev, priv);
+ 
++	if (device_property_read_bool(dev, "be7000,boot-animation"))
++		be7000_boot_animation(priv);
++
+ 	return 0;
+ }
+ 

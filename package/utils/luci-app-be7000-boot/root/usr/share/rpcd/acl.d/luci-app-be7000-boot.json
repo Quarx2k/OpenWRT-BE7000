@@ -1,0 +1,13 @@
+{
+    "luci-app-be7000-boot": {
+        "description": "Reboot BE7000 into Xiaomi firmware",
+        "read": {
+            "ubus": { "file": [ "exec" ] },
+            "file": { "/usr/sbin/be7000-boot status": [ "exec" ] }
+        },
+        "write": {
+            "ubus": { "file": [ "exec" ], "system": [ "reboot" ] },
+            "file": { "/usr/sbin/be7000-boot xiaomi-once": [ "exec" ] }
+        }
+    }
+}

@@ -1,0 +1,203 @@
+Subject: wifi: ath12k: select BE7000 NAND radio mode at module load
+
+--- a/drivers/net/wireless/ath/ath12k/Makefile
++++ b/drivers/net/wireless/ath/ath12k/Makefile
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: BSD-3-Clause-Clear
+ obj-$(CPTCFG_ATH12K) += ath12k.o
+-ath12k-y += core.o \
++ath12k-y += core.o be7000.o \
+ 	    hal.o \
+ 	    wmi.o \
+ 	    mac.o \
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -13,6 +13,7 @@
+ #include <linux/of_graph.h>
+ #include "ahb.h"
+ #include "core.h"
++#include "be7000.h"
+ #include "dp_tx.h"
+ #include "dp_rx.h"
+ #include "debug.h"
+@@ -2223,7 +2224,7 @@
+ 	if (ag->num_devices == 1) {
+ 		ab = ag->ab[0];
+ 		/* A board capped to one radio has no partner link for MLO. */
+-		if (!of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios) &&
++		if (!ath12k_get_num_radios(ab, &num_radios) &&
+ 		    num_radios == 1) {
+ 			ag->mlo_capable = false;
+ 			return;
+--- a/drivers/net/wireless/ath/ath12k/htc.c
++++ b/drivers/net/wireless/ath/ath12k/htc.c
+@@ -8,6 +8,7 @@
+ 
+ #include "debug.h"
+ #include "hif.h"
++#include "be7000.h"
+ 
+ struct sk_buff *ath12k_htc_alloc_skb(struct ath12k_base *ab, int size)
+ {
+@@ -754,7 +755,7 @@
+ 	if (!ab->dev->of_node)
+ 		return;
+ 
+-	if (of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios))
++	if (ath12k_get_num_radios(ab, &num_radios))
+ 		return;
+ 
+ 	if (num_radios && num_radios < ab->htc.wmi_ep_count)
+--- a/drivers/net/wireless/ath/ath12k/qmi.c
++++ b/drivers/net/wireless/ath/ath12k/qmi.c
+@@ -8,6 +8,7 @@
+ 
+ #include "qmi.h"
+ #include "core.h"
++#include "be7000.h"
+ #include "debug.h"
+ #include <linux/of.h>
+ #include <linux/firmware.h>
+@@ -1097,11 +1098,10 @@
+ 	if (!ab->dev->of_node)
+ 		return;
+ 
+-	if (of_property_read_u32(ab->dev->of_node, "qcom,board_id", &board_id) &&
+-	    of_property_read_u32(ab->dev->of_node, "qcom,board-id", &board_id))
++	if (ath12k_get_board_id(ab, &board_id))
+ 		return;
+ 
+-	ath12k_info(ab, "overriding QMI board_id 0x%x with DT board_id 0x%x\n",
++	ath12k_info(ab, "overriding QMI board_id 0x%x with configured board_id 0x%x\n",
+ 		    ab->qmi.target.board_id, board_id);
+ 	ab->qmi.target.board_id = board_id;
+ }
+@@ -2301,13 +2301,13 @@
+ 	if (!ab->dev->of_node)
+ 		return;
+ 
+-	if (of_property_read_u32(ab->dev->of_node, "qcom,num-radios", &num_radios))
++	if (ath12k_get_num_radios(ab, &num_radios))
+ 		return;
+ 
+ 	if (num_radios &&
+ 	    (!ab->qmi.num_radios || ab->qmi.num_radios == U8_MAX ||
+ 	     num_radios < ab->qmi.num_radios)) {
+-		ath12k_info(ab, "overriding QMI num_radios %u with DT num_radios %u\n",
++		ath12k_info(ab, "overriding QMI num_radios %u with configured num_radios %u\n",
+ 			    ab->qmi.num_radios, num_radios);
+ 		ab->qmi.num_radios = num_radios;
+ 	}
+--- a/drivers/net/wireless/ath/ath12k/mhi.c
++++ b/drivers/net/wireless/ath/ath12k/mhi.c
+@@ -10,6 +10,7 @@
+ #include <linux/of.h>
+ 
+ #include "core.h"
++#include "be7000.h"
+ #include "debug.h"
+ #include "mhi.h"
+ #include "pci.h"
+@@ -204,9 +205,8 @@
+ 	mhi_ctrl->reg_len = ab->mem_len;
+ 	mhi_ctrl->rddm_size = ab->hw_params->rddm_size;
+ 
+-	if (!of_property_read_u32(ab->dev->of_node, "qcom,board_id", &board_id) ||
+-	    !of_property_read_u32(ab->dev->of_node, "qcom,board-id", &board_id)) {
+-		ath12k_info(ab, "using DT board id %#x for MHI firmware selection\n",
++	if (!ath12k_get_board_id(ab, &board_id)) {
++		ath12k_info(ab, "using configured board id %#x for MHI firmware selection\n",
+ 			    board_id);
+ 	} else if (ab->hw_params->otp_board_id_register) {
+ 		board_id =
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -12,6 +12,7 @@
+ 
+ #include "pci.h"
+ #include "core.h"
++#include "be7000.h"
+ #include "hif.h"
+ #include "mhi.h"
+ #include "debug.h"
+@@ -1552,6 +1553,10 @@
+ 	pci_set_drvdata(pdev, ab);
+ 	spin_lock_init(&ab_pci->window_lock);
+ 
++	ret = ath12k_be7000_init(ab);
++	if (ret)
++		goto err_free_core;
++
+ 	/* If firmware memory is reserved in DT, avoid the large dynamic
+ 	 * coherent DMA allocation used by the default QMI memory path.
+ 	 */
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath12k/be7000.c
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include "core.h"
++#include "be7000.h"
++
++static int be7000_dual = -1;
++module_param(be7000_dual, int, 0444);
++MODULE_PARM_DESC(be7000_dual, "BE7000 NAND: 0 for single, 1 for dual 5 GHz");
++
++static bool ath12k_be7000_selectable(struct ath12k_base *ab)
++{
++	return of_property_read_bool(ab->dev->of_node, "xiaomi,selectable-radio-mode");
++}
++
++int ath12k_get_board_id(struct ath12k_base *ab, u32 *board_id)
++{
++	if (ath12k_be7000_selectable(ab)) {
++		*board_id = be7000_dual == 1 ? 0x1008 : 0x2;
++		return 0;
++	}
++	if (!of_property_read_u32(ab->dev->of_node, "qcom,board_id", board_id))
++		return 0;
++	return of_property_read_u32(ab->dev->of_node, "qcom,board-id", board_id);
++}
++
++int ath12k_get_num_radios(struct ath12k_base *ab, u32 *num_radios)
++{
++	if (ath12k_be7000_selectable(ab)) {
++		*num_radios = be7000_dual == 1 ? 2 : 1;
++		return 0;
++	}
++	return of_property_read_u32(ab->dev->of_node, "qcom,num-radios", num_radios);
++}
++
++int ath12k_be7000_init(struct ath12k_base *ab)
++{
++	struct gpio_desc *low, *high;
++
++	if (!ath12k_be7000_selectable(ab))
++		return 0;
++	if (be7000_dual != 0 && be7000_dual != 1)
++		return dev_err_probe(ab->dev, -EINVAL, "BE7000 radio mode was not prepared\n");
++
++	low = devm_gpiod_get(ab->dev, "rf-low",
++			     be7000_dual ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW);
++	if (IS_ERR(low))
++		return dev_err_probe(ab->dev, PTR_ERR(low), "Cannot select RF low path\n");
++	high = devm_gpiod_get(ab->dev, "rf-high",
++			      be7000_dual ? GPIOD_OUT_LOW : GPIOD_OUT_HIGH);
++	if (IS_ERR(high))
++		return dev_err_probe(ab->dev, PTR_ERR(high), "Cannot select RF high path\n");
++	return 0;
++}
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath12k/be7000.h
+@@ -0,0 +1,9 @@
++/* SPDX-License-Identifier: BSD-3-Clause-Clear */
++#ifndef ATH12K_BE7000_H
++#define ATH12K_BE7000_H
++
++int ath12k_be7000_init(struct ath12k_base *ab);
++int ath12k_get_board_id(struct ath12k_base *ab, u32 *board_id);
++int ath12k_get_num_radios(struct ath12k_base *ab, u32 *num_radios);
++
++#endif

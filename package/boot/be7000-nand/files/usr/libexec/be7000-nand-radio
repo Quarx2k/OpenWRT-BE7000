@@ -1,0 +1,18 @@
+#!/bin/bash
+set -eo pipefail
+. /lib/functions/system.sh
+
+dual=0
+offset=101
+if [[ $(uci -q get be7000_wifi.settings.mode || true) == dual ]]; then
+	dual=1
+	offset=51
+fi
+art=$(find_mtd_chardev '0:ART')
+[[ -c $art ]]
+mkdir -p /tmp/be7000-caldata
+dd if="$art" of=/tmp/be7000-caldata/ath11k.bin bs=4096 skip=1 count=32 iflag=fullblock 2>/dev/null
+dd if="$art" of=/tmp/be7000-caldata/ath12k.bin bs=4096 skip="$offset" count=45 iflag=fullblock 2>/dev/null
+[[ $(wc -c </tmp/be7000-caldata/ath11k.bin) == 131072 ]]
+[[ $(wc -c </tmp/be7000-caldata/ath12k.bin) == 184320 ]]
+printf 'ath12k be7000_dual=%s\nath12k_wifi7\n' "$dual" >/tmp/be7000-ath12k.modules

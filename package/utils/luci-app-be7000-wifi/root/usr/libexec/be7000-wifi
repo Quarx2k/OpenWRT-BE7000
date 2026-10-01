@@ -14,17 +14,30 @@ for arg in $(cat /proc/cmdline); do
 	case "$arg" in be7000_usb_dir=*) base=/mnt/usb/${arg#*=};; esac
 done
 available=0
+nand=0
+if [[ -f /etc/be7000-nand-layout && -x /usr/libexec/be7000-nand-radio ]]; then
+	nand=1
+	available=1
+fi
 if [[ $(cat /tmp/sysinfo/board_name) == xiaomi,be7000 && -n $base &&
 	-s $base/payload/wifi-single.dtb && -s $base/payload/wifi-dual.dtb &&
 	-f $base/boot/wifi-mode-supported ]]; then
 	available=1
 fi
-radio_count=/sys/bus/pci/devices/0002:01:00.0/of_node/qcom,num-radios
-case $(hexdump -v -e '1/1 "%02x"' "$radio_count" 2>/dev/null) in
-	00000001) current=single;;
-	00000002) current=dual;;
-	*) current=unknown; available=0;;
-esac
+if (( nand )); then
+	case $(cat /sys/module/ath12k/parameters/be7000_dual 2>/dev/null) in
+		0) current=single;;
+		1) current=dual;;
+		*) current=unknown; available=0;;
+	esac
+else
+	radio_count=/sys/bus/pci/devices/0002:01:00.0/of_node/qcom,num-radios
+	case $(hexdump -v -e '1/1 "%02x"' "$radio_count" 2>/dev/null) in
+		00000001) current=single;;
+		00000002) current=dual;;
+		*) current=unknown; available=0;;
+	esac
+fi
 selected=$(get be7000_wifi.settings.mode)
 [[ $selected == dual ]] || selected=single
 mlo=0
@@ -338,12 +351,16 @@ case "$1" in
 		fi
 		u set be7000_wifi.settings.mode="$2"
 		u set be7000_wifi.settings.mlo="$mlo"
-		ln -s "wifi-$2.dtb" "$base/payload/.wifi-dtb.$$"
-		mv -Tf "$base/payload/.wifi-dtb.$$" "$base/payload/be7000-spin-table.dtb"
+		if (( ! nand )); then
+			ln -s "wifi-$2.dtb" "$base/payload/.wifi-dtb.$$"
+			mv -Tf "$base/payload/.wifi-dtb.$$" "$base/payload/be7000-spin-table.dtb"
+		fi
 		u commit be7000_wifi
 		sync
 		selected=$2
 		status
 		;;
-	boot) prepare_wireless;;
+	boot)
+		prepare_wireless
+		;;
 esac

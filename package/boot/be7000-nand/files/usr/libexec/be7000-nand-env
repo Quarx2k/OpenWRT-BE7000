@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+. /lib/be7000-nand.sh
+be7000_nand_guard || { echo 'NAND layout or active slot mismatch' >&2; exit 1; }
+slot=$(be7000_nand_slot)
+config=/etc/be7000-nand/fw_env.config
+get() { fw_printenv -c "$config" -n "$1"; }
+case "${1:-}" in
+	confirm)
+		grep -q ' /overlay ubifs .*rw' /proc/mounts || exit 1
+		counter=flag_try_sys$((slot+1))_failed
+		if [ "$(get "$counter")" = 0 ] && [ "$(get flag_last_success)" = "$slot" ] &&
+			[ "$(get flag_boot_success)" = 1 ] && [ "$(get flag_ota_reboot)" = 0 ]; then exit 0; fi
+		batch=$(mktemp /tmp/be7000-env.XXXXXX)
+		trap 'rm -f "$batch"' EXIT
+		printf '%s\n' "$counter 0" "flag_last_success $slot" 'flag_boot_success 1' 'flag_ota_reboot 0' >"$batch"
+		fw_setenv -c "$config" -s "$batch"
+		[ "$(get "$counter")" = 0 ] && [ "$(get flag_last_success)" = "$slot" ] &&
+			[ "$(get flag_boot_success)" = 1 ] && [ "$(get flag_ota_reboot)" = 0 ]
+		;;
+	*) exit 1;;
+esac
