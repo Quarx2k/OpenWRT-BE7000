@@ -34,6 +34,9 @@ fi
 if ! grep -q be7000_boot_animation "$linux/drivers/leds/leds-gpio.c"; then
   patch --batch -d "$linux" -p1 <"$pkg/patches/002-be7000-boot-leds.patch"
 fi
+if grep -q 'msleep(120)' "$linux/drivers/leds/leds-gpio.c"; then
+  patch --batch -d "$linux" -p1 <"$pkg/patches/004-be7000-boot-leds-slower.patch"
+fi
 if ! grep -q 'subsys_initcall(gpio_led_init)' "$linux/drivers/leds/leds-gpio.c"; then
   patch --batch -d "$linux" -p1 <"$pkg/patches/003-gpio-leds-early-init.patch"
 fi

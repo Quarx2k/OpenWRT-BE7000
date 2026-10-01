@@ -1,0 +1,21 @@
+--- a/drivers/leds/leds-gpio.c
++++ b/drivers/leds/leds-gpio.c
+@@ -267,6 +267,6 @@ static void be7000_boot_animation(struct gpio_leds_priv *priv)
+ 	for (step = 0; step < ARRAY_SIZE(order); step++) {
+ 		if (step == 3)
+-			msleep(180);
++			msleep(240);
+ 		for (i = 0; i < priv->num_leds; i++) {
+ 			struct led_classdev *led = &priv->leds[i].cdev;
+ 
+@@ -274,8 +274,8 @@ static void be7000_boot_animation(struct gpio_leds_priv *priv)
+ 				continue;
+ 			gpio_led_set(led, LED_FULL);
+-			msleep(120);
++			msleep(200);
+ 			gpio_led_set(led, LED_OFF);
+-			msleep(80);
++			msleep(100);
+ 		}
+ 	}
+ 	for (i = 0; i < priv->num_leds; i++)
