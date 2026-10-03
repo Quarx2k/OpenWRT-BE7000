@@ -57,7 +57,7 @@ return view.extend({
 			description.textContent = !checkbox.checked
 				? _('After reboot: one 5 GHz network with the original channel width.')
 				: mloCheckbox.checked
-					? _('After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channels 36 and 149, 80 MHz each.')
+					? _('After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz.')
 					: _('After reboot: two separate 5 GHz networks, each with its own name.');
 		}
 		checkbox.addEventListener('change', function() {

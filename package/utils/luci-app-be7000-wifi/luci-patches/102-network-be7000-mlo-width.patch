@@ -1,0 +1,22 @@
+--- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -456,7 +456,7 @@
+ 			if (this.mlo) {
+ 				this.modes = [ 'be', 'BE', { available: hwmodelist.be } ];
+ 				this.bands.be = [ '5g', '5 GHz', { available: true } ];
+-				this.htmodes.be = this.htmodes.be.slice(0, 9);
++				this.htmodes.be = this.htmodes.be.slice(0, this.ucisection == wifiOverview.mlo.devices[0] ? 12 : 9);
+ 			}
+ 		}, this));
+ 	},
+--- a/modules/luci-mod-network/Makefile
++++ b/modules/luci-mod-network/Makefile
+@@ -10,7 +10,7 @@
+ LUCI_DEPENDS:=+luci-base +rpcd-mod-iwinfo +luci-lib-uqr
+ 
+ PKG_VERSION=$(PKG_SRC_VERSION)
+-PKG_RELEASE:=1
++PKG_RELEASE:=2
+ PKG_LICENSE:=Apache-2.0
+ 
+ include ../../luci.mk

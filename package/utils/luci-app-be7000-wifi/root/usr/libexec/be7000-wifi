@@ -281,7 +281,7 @@ prepare_wireless() {
 			channel=$(get be7000_wifi.settings.mlo_high_channel)
 			u set "wireless.radio2.channel=${channel:-149}"
 			width=$(get be7000_wifi.settings.mlo_low_htmode)
-			u set "wireless.$radio.htmode=${width:-EHT80}"
+			u set "wireless.$radio.htmode=${width:-EHT160}"
 			if [[ -n $width ]]; then
 				restore_option low_noscan "$radio.noscan"
 			else
@@ -295,12 +295,14 @@ prepare_wireless() {
 				u set wireless.radio2.noscan=1
 			fi
 		fi
-		for option in "$radio" radio2; do
-			case $(get wireless.$option.htmode) in
-				EHT20|EHT40|EHT80) ;;
-				*) u set wireless.$option.htmode=EHT80;;
-			esac
-		done
+		case $(get wireless.$radio.htmode) in
+			EHT20|EHT40|EHT80|EHT160) ;;
+			*) u set wireless.$radio.htmode=EHT160;;
+		esac
+		case $(get wireless.radio2.htmode) in
+			EHT20|EHT40|EHT80) ;;
+			*) u set wireless.radio2.htmode=EHT80;;
+		esac
 		u set wireless.$iface.disabled=1
 		u set wireless.default_radio2.disabled=1
 		if [[ -z $(get wireless.be7000_mlo) ]]; then

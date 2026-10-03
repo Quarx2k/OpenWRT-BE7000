@@ -49,8 +49,8 @@ msgstr "После перезагрузки останется одна сеть
 msgid "After reboot: two separate 5 GHz networks, each with its own name."
 msgstr "После перезагрузки будут две отдельные сети 5 ГГц, каждая со своим именем."
 
-msgid "After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channels 36 and 149, 80 MHz each."
-msgstr "После перезагрузки будет одна сеть MLO с WPA3 и двумя связями 5 ГГц. По умолчанию — каналы 36 и 149, по 80 МГц."
+msgid "After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz."
+msgstr "После перезагрузки будет одна сеть MLO с WPA3 и двумя связями 5 ГГц. По умолчанию — канал 36 на 160 МГц и канал 149 на 80 МГц."
 
 msgid "Rebooting…"
 msgstr "Перезагрузка…"
