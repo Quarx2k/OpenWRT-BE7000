@@ -16,6 +16,7 @@ return view.extend({
 		var rebooting = false;
 		var message = E('p', { role: 'status' });
 		var description = E('p');
+		var currentMode = E('p');
 		var modeName = function(mode, mlo) { return mode === 'dual' ? (mlo ? _('One MLO network (two links)') : _('Two independent 5 GHz networks')) : _('One 5 GHz radio'); };
 		function save() {
 			busy = true;
@@ -30,6 +31,10 @@ return view.extend({
 				})[result.error] || result.error);
 				data = result;
 				updateMessage();
+				if (!data.pending) {
+					message.textContent = _('Applied.');
+					return;
+				}
 				return callReboot().then(function(code) {
 					if (code !== 0) throw new Error(_('The reboot command failed with code %d').format(code));
 					rebooting = true;
@@ -43,22 +48,24 @@ return view.extend({
 				updateControls();
 			});
 		}
-		var rebootButton = E('button', {
+		var applyButton = E('button', {
 			'class': 'cbi-button cbi-button-action important',
 			click: save
 		}, _('Save and reboot'));
 		function updateMessage() {
+			currentMode.textContent = _('Current mode: %s').format(modeName(data.current, data.current_mlo));
 			message.textContent = data.pending
 				? _('Saved. Reboot to apply.') : '';
 		}
 		function updateControls() {
-			rebootButton.disabled = checkbox.disabled = busy || !data.available || !L.hasViewPermission();
+			applyButton.textContent = data.current === 'dual' && checkbox.checked ? _('Save and apply') : _('Save and reboot');
+			applyButton.disabled = checkbox.disabled = busy || !data.available || !L.hasViewPermission();
 			mloCheckbox.disabled = checkbox.disabled || !checkbox.checked;
 			description.textContent = !checkbox.checked
 				? _('After reboot: one 5 GHz network with the original channel width.')
 				: mloCheckbox.checked
-					? _('After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz.')
-					: _('After reboot: two separate 5 GHz networks, each with its own name.');
+					? _('One MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz.')
+					: _('Two separate 5 GHz networks, each with its own name.');
 		}
 		checkbox.addEventListener('change', function() {
 			if (!checkbox.checked) mloCheckbox.checked = false;
@@ -70,7 +77,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-map', style: 'max-width: 760px' }, [
 			E('h2', {}, _('5 GHz mode')),
 			E('div', { 'class': 'cbi-section' }, [
-				E('p', {}, _('Current mode: %s').format(modeName(data.current, data.current_mlo))),
+				currentMode,
 				E('label', { style: 'display: flex; align-items: center; gap: .7em; margin: 1.5em 0' }, [
 					checkbox, E('strong', {}, _('Enable a second 5 GHz radio'))
 				]),
@@ -78,8 +85,9 @@ return view.extend({
 					mloCheckbox, E('strong', {}, _('Combine the radios into MLO (MLD)'))
 				]),
 				description,
+				E('p', {}, _('Changing the number of radios requires a reboot. Switching MLO with two active radios only restarts Wi-Fi.')),
 				!data.available ? E('p', { 'class': 'alert-message warning' }, _('The boot files for switching radio modes are not installed.')) : '',
-				rebootButton, message
+				applyButton, message
 			])
 		]);
 	},

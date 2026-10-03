@@ -46,11 +46,20 @@ msgstr "Сохранено. Для применения перезагрузит
 msgid "After reboot: one 5 GHz network with the original channel width."
 msgstr "После перезагрузки останется одна сеть 5 ГГц с исходной шириной канала."
 
-msgid "After reboot: two separate 5 GHz networks, each with its own name."
-msgstr "После перезагрузки будут две отдельные сети 5 ГГц, каждая со своим именем."
+msgid "Two separate 5 GHz networks, each with its own name."
+msgstr "Две отдельные сети 5 ГГц, каждая со своим именем."
 
-msgid "After reboot: one MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz."
-msgstr "После перезагрузки будет одна сеть MLO с WPA3 и двумя связями 5 ГГц. По умолчанию — канал 36 на 160 МГц и канал 149 на 80 МГц."
+msgid "One MLO network with WPA3 and two 5 GHz links. Default: channel 36 at 160 MHz and channel 149 at 80 MHz."
+msgstr "Одна сеть MLO с WPA3 и двумя связями 5 ГГц. По умолчанию — канал 36 на 160 МГц и канал 149 на 80 МГц."
+
+msgid "Save and apply"
+msgstr "Сохранить и применить"
+
+msgid "Applied."
+msgstr "Применено."
+
+msgid "Changing the number of radios requires a reboot. Switching MLO with two active radios only restarts Wi-Fi."
+msgstr "Для изменения числа радио нужна перезагрузка роутера. Переключение MLO при двух активных радио только перезапускает Wi-Fi."
 
 msgid "Rebooting…"
 msgstr "Перезагрузка…"

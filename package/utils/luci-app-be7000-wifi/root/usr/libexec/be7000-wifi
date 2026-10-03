@@ -360,6 +360,16 @@ case "$1" in
 		u commit be7000_wifi
 		sync
 		selected=$2
+		if [[ $current == dual && $selected == dual && $current_mlo != "$mlo" ]]; then
+			wifi down "$radio"
+			wifi down radio2
+			sleep 2
+			prepare_wireless
+			sync
+			wifi up "$radio"
+			wifi up radio2
+			current_mlo=$mlo
+		fi
 		status
 		;;
 	boot)
