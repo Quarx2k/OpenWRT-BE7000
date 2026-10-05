@@ -13,8 +13,9 @@ if errorlevel 1 (
  echo Enter an IPv4 address.
  goto failed
 )
-echo This installs OpenWrt in the opposite NAND slot and reboots the router.
-echo First boot erases the stock data/settings partition. Backups are saved on this PC.
+echo From stock: installs into the opposite NAND slot and erases stock settings.
+echo From BE7000 NAND OpenWrt: builds an ASU image with your packages and keeps settings.
+echo The router reboots afterwards. Backups are saved on this PC.
 set "CONFIRM="
 set /p "CONFIRM=Type YES to install: "
 set CONFIRM | findstr /i /x "CONFIRM=YES" >nul
@@ -26,12 +27,15 @@ if not exist backups mkdir backups
 if errorlevel 1 goto failed
 set "SSH_OPTIONS=-o ConnectTimeout=10 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o GlobalKnownHostsFile=NUL"
 echo Enter the current root SSH password. It will be requested again to start flashing.
-tar.exe -cf - installer/router-install.sh factory.ubi | ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "set -e; umask 077; mkdir '%REMOTE_DIR%'; tar -xf - -C '%REMOTE_DIR%'; sh '%REMOTE_DIR%/installer/router-install.sh' prepare" >"%BACKUP%"
+tar.exe -cf - installer/router-install.sh installer/fix-sysupgrade.sh factory.ubi | ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "set -e; umask 077; mkdir '%REMOTE_DIR%'; tar -xf - -C '%REMOTE_DIR%'; sh '%REMOTE_DIR%/installer/router-install.sh' prepare" >"%BACKUP%"
 if errorlevel 1 goto failed
 tar.exe -tf "%BACKUP%" >nul
 if errorlevel 1 goto failed
 echo Backups saved: %CD%\%BACKUP%
-ssh.exe %SSH_OPTIONS% root@%ROUTER_IP% "sh '%REMOTE_DIR%/installer/router-install.sh' flash"
+set "INSTALL_TTY="
+tar.exe -tf "%BACKUP%" | findstr /x /c:"backup/active-mtd" >nul
+if not errorlevel 1 set "INSTALL_TTY=-t"
+ssh.exe %INSTALL_TTY% %SSH_OPTIONS% root@%ROUTER_IP% "sh '%REMOTE_DIR%/installer/router-install.sh' flash"
 if errorlevel 1 goto failed
 echo Done. Wait for OpenWrt to boot, then open http://192.168.1.1
 pause

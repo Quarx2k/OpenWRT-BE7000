@@ -166,9 +166,10 @@ mkdir -p "$out/install/installer"
 install -m 755 "$pkg/installer/install.sh" "$out/install/install.sh"
 sed 's/\r$//;s/$/\r/' "$pkg/installer/install.cmd" >"$out/install/install.cmd"
 install -m 755 "$pkg/installer/router-install.sh" "$out/install/installer/router-install.sh"
+install -m 755 "$pkg/installer/fix-sysupgrade.sh" "$out/install/installer/fix-sysupgrade.sh"
 cp "$out/factory.ubi" "$out/install/"
 tar --owner=0 --group=0 --mode='u=rwX,go=rX' -C "$out" -czf "$out/be7000-nand-install.tar.gz" \
-  install/install.cmd install/install.sh install/installer/router-install.sh install/factory.ubi
+  install/install.cmd install/install.sh install/installer/router-install.sh install/installer/fix-sysupgrade.sh install/factory.ubi
 cp "$linux/System.map" "$out/System.map"
 printf '%s\n' "$work" >"$out/build-directory.txt"
 echo "Built NAND image and installation bundle in $out"
