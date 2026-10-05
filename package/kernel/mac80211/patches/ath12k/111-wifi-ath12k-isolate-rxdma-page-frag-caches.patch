@@ -1,9 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Mark Ruvald Pedersen <wabsie@gmail.com>
-Date: Sun, 19 Jul 2026 23:58:17 +0200
+From: Nikolai Semendiaev <agent00791@gmail.com>
+Date: Tue, 6 Oct 2026 01:42:32 +0600
 Subject: [PATCH] wifi: ath12k: use private page-frag caches for RXDMA rings
 
-Adapt Mark Ruvald Pedersen's ath11k per-ring page-frag isolation to ath12k.
+Based on Mark Ruvald Pedersen's ath11k per-ring page-frag isolation.
 Regular RX and monitor buffers currently share per-CPU caches with other
 network users. Long-lived ring fragments can retain sparsely populated
 32-KiB backing pages even while ring occupancy remains constant.
@@ -23,15 +23,12 @@ Reserve extra alignment space for monitor status buffers so that their
 DMA capacity remains at least RX_MON_STATUS_BUF_SIZE after alignment.
 RX ring capacities and CE allocation remain unchanged.
 
-Adapted for ath12k by Nikolai Semendiaev <agent00791@gmail.com>.
-
 Link: https://lore.kernel.org/linux-wireless/20260719215817.2468580-4-wabsie@gmail.com/
-Signed-off-by: Mark Ruvald Pedersen <wabsie@gmail.com>
 Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
 ---
 --- a/drivers/net/wireless/ath/ath12k/core.c
 +++ b/drivers/net/wireless/ath/ath12k/core.c
-@@ -1409,6 +1409,9 @@
+@@ -1386,6 +1386,9 @@ static int ath12k_core_reconfigure_on_cr
  {
  	int ret, total_vdev;
  
@@ -51,7 +48,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  #include <linux/rhashtable.h>
  
  #define MAX_RXDMA_PER_PDEV     2
-@@ -41,6 +42,7 @@
+@@ -41,6 +42,7 @@ struct dp_srng {
  
  struct dp_rxdma_mon_ring {
  	struct dp_srng refill_buf_ring;
@@ -59,7 +56,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  	struct idr bufs_idr;
  	/* Protects bufs_idr */
  	spinlock_t idr_lock;
-@@ -49,6 +51,7 @@
+@@ -49,6 +51,7 @@ struct dp_rxdma_mon_ring {
  
  struct dp_rxdma_ring {
  	struct dp_srng refill_buf_ring;
@@ -77,7 +74,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  #include "core.h"
  #include "dp_tx.h"
  #include "hif.h"
-@@ -1019,6 +1020,8 @@
+@@ -1015,6 +1016,8 @@ static void ath12k_dp_cc_cleanup(struct
  
  	spin_unlock_bh(&dp->rx_desc_lock);
  
@@ -101,7 +98,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  #include "core.h"
  #include "debug.h"
  #include "hw.h"
-@@ -68,6 +71,35 @@
+@@ -68,6 +71,35 @@ static void ath12k_dp_rx_enqueue_free(st
  	spin_unlock_bh(&dp->rx_desc_lock);
  }
  
@@ -137,7 +134,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  /* Returns number of Rx buffers replenished */
  int ath12k_dp_rx_bufs_replenish(struct ath12k_dp *dp,
  				struct dp_rxdma_ring *rx_ring,
-@@ -114,16 +146,17 @@
+@@ -114,16 +146,17 @@ int ath12k_dp_rx_bufs_replenish(struct a
  	}
  
  	while (num_remain > 0) {
@@ -160,7 +157,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  		}
  
  		paddr = dma_map_single(dp->dev, skb->data,
-@@ -193,6 +226,8 @@
+@@ -193,6 +226,8 @@ static int ath12k_dp_rxdma_mon_buf_ring_
  	idr_destroy(&rx_ring->bufs_idr);
  	spin_unlock_bh(&rx_ring->idr_lock);
  
@@ -171,7 +168,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  
 --- a/drivers/net/wireless/ath/ath12k/dp_rx.h
 +++ b/drivers/net/wireless/ath/ath12k/dp_rx.h
-@@ -232,6 +232,8 @@
+@@ -232,6 +232,8 @@ int ath12k_dp_rx_bufs_replenish(struct a
  				struct dp_rxdma_ring *rx_ring,
  				struct list_head *used_list,
  				int req_entries);
@@ -190,7 +187,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  #include "debug.h"
  #include "dp_tx.h"
  #include "peer.h"
-@@ -44,15 +45,17 @@
+@@ -44,15 +45,17 @@ struct sk_buff
  	struct sk_buff *skb;
  	dma_addr_t paddr;
  
@@ -211,7 +208,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  	}
  
  	paddr = dma_map_single(ab->dev, skb->data,
-@@ -667,14 +670,16 @@
+@@ -667,14 +670,16 @@ int ath12k_dp_mon_buf_replenish(struct a
  	ath12k_hal_srng_access_begin(ab, srng);
  
  	while (req_entries > 0) {
@@ -232,7 +229,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  		}
  
  		paddr = dma_map_single(ab->dev, skb->data,
-@@ -756,15 +761,17 @@
+@@ -756,15 +761,17 @@ int ath12k_dp_mon_status_bufs_replenish(
  	num_remain = req_entries;
  
  	while (num_remain > 0) {
