@@ -19,6 +19,12 @@ fi
 if ! grep -q ath12k_qmi_assign_pci_mlo_mem_chunk "$wifi/drivers/net/wireless/ath/ath12k/qmi.c"; then
   patch --batch -p1 -d "$wifi" <"$pkg/ath12k-patches/003-pci-fixed-mlo-memory.patch"
 fi
+if ! grep -A3 'if (!irq_grp->napi_enabled)' "$wifi/drivers/net/wireless/ath/ath12k/pci.c" | grep -q ath12k_pci_ext_grp_enable; then
+  patch --batch -p1 -d "$wifi" <"$pkg/../../kernel/mac80211/patches/ath12k/110-wifi-ath12k-guard-external-irq-transitions.patch"
+fi
+if ! grep -q ath12k_dp_rx_alloc_skb "$wifi/drivers/net/wireless/ath/ath12k/dp_rx.c"; then
+  patch --batch -p1 -d "$wifi" <"$pkg/../../kernel/mac80211/patches/ath12k/111-wifi-ath12k-isolate-rxdma-page-frag-caches.patch"
+fi
 toolchain=($base/staging_dir/toolchain-aarch64_cortex-a53_gcc-*_musl)
 export PATH=${toolchain[0]}/bin:$base/staging_dir/host/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export STAGING_DIR=$base/staging_dir/target-aarch64_cortex-a53_musl GCC_HONOUR_COPTS=s
