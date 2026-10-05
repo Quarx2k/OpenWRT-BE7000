@@ -1,0 +1,64 @@
+From: Apoorv Gupta <quic_apoogupt@quicinc.com>
+Date: Thu, 12 May 2022 17:39:46 +0530
+Subject: [PATCH] net: qualcomm: ppe: read RX skb from the current descriptor
+
+Take the RX buffer from the current descriptor on every iteration. A
+source-port rejection otherwise frees the cached next_skb without updating
+it, so the following descriptor is processed with the freed buffer.
+
+Adapt the descriptor-local buffer selection from Qualcomm's RX prefetch
+rework; omit its unrelated prefetch and batching changes.
+
+Link: https://git.codelinaro.org/clo/qsdk/oss/lklm/nss-dp/-/commit/307eedd2c497e108698aef23b3101baf0e3b64f7
+Signed-off-by: Apoorv Gupta <quic_apoogupt@quicinc.com>
+Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
+---
+--- a/drivers/net/ethernet/qualcomm/ppe/edma_rx.c
++++ b/drivers/net/ethernet/qualcomm/ppe/edma_rx.c
+@@ -451,7 +451,6 @@
+ 	struct device *dev = ppe_dev->dev;
+ 	u32 prod_idx, cons_idx, end_idx;
+ 	u32 work_to_do, work_done = 0;
+-	struct sk_buff *next_skb;
+ 	u32 work_leftover, reg;
+ 
+ 	/* Get Rx ring producer and consumer indices. */
+@@ -475,9 +474,6 @@
+ 	end_idx = (cons_idx + work_to_do) & EDMA_RX_RING_SIZE_MASK;
+ 	next_rxdesc_pri = EDMA_RXDESC_PRI_DESC(rxdesc_ring, cons_idx);
+ 
+-	/* Get opaque from RXDESC. */
+-	next_skb = (struct sk_buff *)EDMA_RXDESC_OPAQUE_GET(next_rxdesc_pri);
+-
+ 	work_leftover = work_to_do & (EDMA_RX_MAX_PROCESS - 1);
+ 	while (likely(work_to_do--)) {
+ 		struct edma_rxdesc_pri *rxdesc_pri;
+@@ -486,8 +482,8 @@
+ 		dma_addr_t dma_addr;
+ 		u32 dma_map_size;
+ 
+-		skb = next_skb;
+ 		rxdesc_pri = next_rxdesc_pri;
++		skb = (struct sk_buff *)EDMA_RXDESC_OPAQUE_GET(rxdesc_pri);
+ 		dma_addr = EDMA_RXDESC_BUFFER_ADDR_GET(rxdesc_pri);
+ 		dma_map_size = alloc_size - EDMA_RX_SKB_HEADROOM - NET_IP_ALIGN;
+ 
+@@ -516,9 +512,6 @@
+ 
+ 			/* Handle linear packets. */
+ 			if (likely(!EDMA_RXDESC_MORE_BIT_GET(rxdesc_pri))) {
+-				next_skb =
+-					(struct sk_buff *)EDMA_RXDESC_OPAQUE_GET(next_rxdesc_pri);
+-
+ 				if (unlikely(!
+ 					     edma_rx_handle_linear_packets(rxdesc_ring,
+ 									   rxdesc_pri, skb)))
+@@ -527,8 +520,6 @@
+ 				goto next_rx_desc;
+ 			}
+ 		}
+-
+-		next_skb = (struct sk_buff *)EDMA_RXDESC_OPAQUE_GET(next_rxdesc_pri);
+ 
+ 		/* Handle scatter frame processing for first/middle/last segments. */
+ 		page_mode ? edma_rx_handle_nr_frags(rxdesc_ring, rxdesc_pri, skb) :
