@@ -9,7 +9,7 @@ network users. Long-lived ring fragments can retain sparsely populated
 32-KiB backing pages even while ring occupancy remains constant.
 
 Give each regular and monitor RXDMA ring a private page_frag_cache.
-Preserve initial skb headroom, fragment size, allocation flags and DMA
+Preserve initial skb headroom, allocation flags and DMA
 map/unmap operations. Existing refill SRNG locks serialize the private
 caches.
 Drain monitor caches after their IDR-owned buffers are released and the
@@ -19,7 +19,8 @@ the reset worker already does so. The IRQ lifecycle patch is required.
 
 Keep the original series' DMA-alignment correction: skb_pull() cannot
 advance an empty skb, so use skb_reserve() before posting each buffer.
-The existing extra allocation space preserves the required DMA capacity.
+Reserve extra alignment space for monitor status buffers so that their
+DMA capacity remains at least RX_MON_STATUS_BUF_SIZE after alignment.
 RX ring capacities and CE allocation remain unchanged.
 
 Adapted for ath12k by Nikolai Semendiaev <agent00791@gmail.com>.
@@ -189,13 +190,14 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  #include "debug.h"
  #include "dp_tx.h"
  #include "peer.h"
-@@ -44,15 +45,16 @@
+@@ -44,15 +45,17 @@
  	struct sk_buff *skb;
  	dma_addr_t paddr;
  
 -	skb = dev_alloc_skb(RX_MON_STATUS_BUF_SIZE);
 +	skb = ath12k_dp_rx_alloc_skb(&rx_ring->frag_cache,
-+				     RX_MON_STATUS_BUF_SIZE);
++				     RX_MON_STATUS_BUF_SIZE +
++				     RX_MON_STATUS_BUF_ALIGN);
  
  	if (!skb)
  		goto fail_alloc_skb;
@@ -209,7 +211,7 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  	}
  
  	paddr = dma_map_single(ab->dev, skb->data,
-@@ -667,14 +669,16 @@
+@@ -667,14 +670,16 @@
  	ath12k_hal_srng_access_begin(ab, srng);
  
  	while (req_entries > 0) {
@@ -230,13 +232,14 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  		}
  
  		paddr = dma_map_single(ab->dev, skb->data,
-@@ -756,15 +760,16 @@
+@@ -756,15 +761,17 @@
  	num_remain = req_entries;
  
  	while (num_remain > 0) {
 -		skb = dev_alloc_skb(RX_MON_STATUS_BUF_SIZE);
 +		skb = ath12k_dp_rx_alloc_skb(&rx_ring->frag_cache,
-+					     RX_MON_STATUS_BUF_SIZE);
++					     RX_MON_STATUS_BUF_SIZE +
++					     RX_MON_STATUS_BUF_ALIGN);
  		if (!skb)
  			break;
  
