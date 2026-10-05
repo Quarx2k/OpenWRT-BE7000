@@ -23,8 +23,10 @@ mkdir -p /etc/apk/keys /etc/apk/repositories.d
 wget -O /etc/apk/keys/be7000-packages.pem \
   https://openwrt.quarx2k.dev/packages/keys/be7000-packages.pem
 . /etc/openwrt_release
-printf 'https://openwrt.quarx2k.dev/packages/%s/qualcommbe/ipq95xx/packages.adb\n' \
-  "$DISTRIB_REVISION" > /etc/apk/repositories.d/be7000.list
+printf '%s\n' \
+  "https://openwrt.quarx2k.dev/packages/$DISTRIB_REVISION/qualcommbe/ipq95xx/packages.adb" \
+  'https://openwrt.quarx2k.dev/packages/common/aarch64_cortex-a53/packages.adb' \
+  > /etc/apk/repositories.d/be7000.list
 apk update
 ```
 

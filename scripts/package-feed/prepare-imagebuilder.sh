@@ -5,6 +5,7 @@ ib=$(realpath "$2")
 tag=${3:-$(TOPDIR="$source_dir" "$source_dir/scripts/getver.sh")}
 install -m 0644 "$source_dir/package/system/be7000-package-feed/files/be7000-packages.pem" "$ib/keys/"
 printf 'https://openwrt.quarx2k.dev/packages/%s/qualcommbe/ipq95xx/packages.adb\n' "$tag" >>"$ib/repositories"
+printf 'https://openwrt.quarx2k.dev/packages/common/aarch64_cortex-a53/packages.adb\n' >>"$ib/repositories"
 awk '
     /^Target-Profile:/ { profile=$2 }
     /^Target-Profile-Packages:/ && (profile=="DEVICE_xiaomi_be7000-native" || profile=="DEVICE_xiaomi_be7000-nand") {
