@@ -2,7 +2,7 @@ Subject: wifi: ath12k: skip absent radios when freeing pdev data
 
 --- a/drivers/net/wireless/ath/ath12k/dp.c
 +++ b/drivers/net/wireless/ath/ath12k/dp.c
-@@ -842,14 +842,18 @@ void ath12k_dp_pdev_free(struct ath12k_base *ab)
+@@ -842,13 +842,17 @@ void ath12k_dp_pdev_free(struct ath12k_base *ab)
  
  	for (i = 0; i < ab->num_radios; i++) {
  		ar = ab->pdevs[i].ar;
