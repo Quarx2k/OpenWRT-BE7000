@@ -63,8 +63,8 @@ for name in system.img userdata.img boot payload; do
     [ ! -L "$base/$name" ] || fail "Redirected installation path: $name"
 done
 
-echo 'Offline installation uses the packages included in firmware.bin.'
-echo 'Additional installed packages are not carried over; use ASU to rebuild with them.'
+echo 'The bundled firmware is available for offline installation.'
+echo 'When updating running OpenWrt, ASU can keep your installed packages.'
 if [ -s "$base/system.img" ] && [ -s "$base/userdata.img" ]; then
     echo 'An existing OpenWrt installation was found.'
     echo '  1 - Update and keep settings (default)'
@@ -88,6 +88,56 @@ if [ "$system" = stock ]; then
     sh "$here/stock-install.sh" "$mode" "$auto" "$dev" "$usb"
     scheduled=yes
     exit 0
+fi
+
+if [ "$mode" = update ]; then
+    printf 'Build an ASU image with your installed packages? [Y/n]: '
+    read_choice
+    case "$choice" in
+        ''|y|Y|yes|YES)
+            (
+                command -v owut >/dev/null || fail 'Install owut or select offline updating.'
+                awk '
+                    /return this.rev_num\(\) < from.rev_num\(\);/ {
+                        print "\t\tif (this.is_snapshot() && from.is_snapshot() && (match(this.rev_code, /^r[0-9]+\\+[0-9]+-/) || match(from.rev_code, /^r[0-9]+\\+[0-9]+-/)))"
+                        print "\t\t\treturn version_older(this.kernel, from.kernel);"
+                    }
+                    { print }
+                ' "$(command -v owut)" >"$here/owut"
+                chmod +x "$here/owut"
+                owut=$here/owut
+                repo=/etc/apk/repositories.d/be7000.list
+                if [ -f "$repo" ]; then
+                    cp "$repo" "$here/repository.saved"
+                    trap 'cp "$here/repository.saved" "$repo"' EXIT
+                    sed '/^https:\/\/openwrt\.quarx2k\.dev\/packages\/r[^/]*\/qualcommbe\/ipq95xx\/packages\.adb$/d' "$here/repository.saved" >"$repo"
+                fi
+                "$owut" dump -v -v >"$here/asu-packages.json"
+                missing=$(ucode -e '
+                    import { readfile } from "fs";
+                    let data = json(readfile(ARGV[0]));
+                    for (let name, pkg in data.packageDB)
+                        if (pkg.top_level && !pkg.default && !pkg.new_version)
+                            print(name, "\n");
+                ' "$here/asu-packages.json")
+                set -- --image "$image"
+                if [ -n "$missing" ]; then
+                    echo 'These packages are unavailable in ASU and will be removed after the upgrade:'
+                    printf '%s\n' "$missing"
+                    echo 'Their saved settings will be kept. No packages have been removed yet.'
+                    printf 'Type YES to continue without these packages, or anything else to cancel: '
+                    read -r confirm
+                    [ "$confirm" = YES ] || fail 'Cancelled. Firmware was not changed.'
+                    for name in $missing; do
+                        set -- "$@" --remove "$name"
+                    done
+                fi
+                "$owut" download "$@"
+            )
+            ;;
+        n|N|no|NO) echo 'Offline update keeps settings but replaces additional installed packages.';;
+        *) fail 'Invalid choice';;
+    esac
 fi
 
 # Bootstrap old 6.18 builds. Only sysupgrade may replace the active USB images.
