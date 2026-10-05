@@ -82,9 +82,12 @@ struct otto_l3_route {
 	struct in6_addr dst_ip6;
 	int prefix_len;			/* Network prefix len of the destination net */
 	bool is_host_route;
+	bool replaced;			/* torn down for a route to the same destination */
 	int id;				/* ID number of this route */
 	int row;			/* Row it occupies in the prefix route table */
 	unsigned int members;		/* FIB entries a trap row stands for */
+	struct list_head srcs;		/* source-specific routes a trap row stands for */
+	bool srcs_incomplete;		/* a source could not be tracked */
 	struct rhlist_head linkage;
 	struct list_head list;		/* all routes, for lookups by destination */
 	u32 tb_id;			/* routing table the route came from */
@@ -125,12 +128,17 @@ struct otto_l3_ctrl {
 	struct rtl838x_switch_priv *priv;
 	struct notifier_block fib_nb;
 	struct notifier_block ne_nb;
+	struct delayed_work resync_work;
+	unsigned int resync_delay;
+	bool resync_wanted;
 	struct rhltable routes;
 	struct list_head routes_list;
 	unsigned long route_use_bm[MAX_ROUTES / 32];
 	unsigned long host_route_use_bm[MAX_HOST_ROUTES / 32];
 	struct otto_l3_intf interfaces[MAX_SMACS];
 	bool prefix_rows_stale;	/* a move failed, the rows are not where we say */
+	bool v4_fwd_off;	/* policy rules keep IPv4 forwarding in software */
+	bool v6_fwd_off;	/* policy rules keep IPv6 forwarding in software */
 	struct mutex *lock; /* protect register access */
 };
 
