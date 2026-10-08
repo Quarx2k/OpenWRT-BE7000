@@ -1,0 +1,76 @@
+From: Nikolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] wifi: ath12k: handle all vdevs in per-chain RSSI statistics
+
+QCN9274 firmware returns per-chain RSSI records for all active vdevs,
+including AP interfaces and interfaces on other radios, regardless of
+the requested pdev and vdev. Looking up each record on the response pdev
+fails for an interface on another radio and aborts parsing before the
+station record is reached. AP records also have no associated BSSID peer.
+
+Look up each vdev across the device, skip non-station and obsolete records,
+and identify the RSSI response before skipping records so that the waiting
+request can complete.
+
+Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -8458,7 +8458,6 @@ static int ath12k_wmi_tlv_rssi_chain_par
+ 	struct ath12k_fw_stats *stats = parse->stats;
+ 	struct ath12k_link_vif *arvif;
+ 	struct ath12k_link_sta *arsta;
+-	struct ath12k *ar;
+ 	int vdev_id;
+ 	int j;
+ 
+@@ -8474,20 +8473,15 @@ static int ath12k_wmi_tlv_rssi_chain_par
+ 		return -EINVAL;
+ 
+ 	stats->pdev_id = le32_to_cpu(ev->pdev_id);
++	stats->stats_id = WMI_REQUEST_RSSI_PER_CHAIN_STAT;
+ 	vdev_id = le32_to_cpu(stats_rssi->vdev_id);
+ 	guard(rcu)();
+-	ar = ath12k_mac_get_ar_by_pdev_id(ab, stats->pdev_id);
+-	if (!ar) {
+-		ath12k_warn(ab, "invalid pdev id %d in rssi chain parse\n",
+-			    stats->pdev_id);
+-		return -EPROTO;
+-	}
++	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
++	if (!arvif)
++		return 0;
+ 
+-	arvif = ath12k_mac_get_arvif(ar, vdev_id);
+-	if (!arvif) {
+-		ath12k_warn(ab, "not found vif for vdev id %d\n", vdev_id);
+-		return -EPROTO;
+-	}
++	if (arvif->ahvif->vdev_type != WMI_VDEV_TYPE_STA)
++		return 0;
+ 
+ 	ath12k_dbg(ab, ATH12K_DBG_WMI,
+ 		   "stats bssid %pM vif %p\n",
+@@ -8495,12 +8489,8 @@ static int ath12k_wmi_tlv_rssi_chain_par
+ 
+ 	guard(spinlock_bh)(&ab->base_lock);
+ 	arsta = ath12k_link_sta_find_by_addr(ab, arvif->bssid);
+-	if (!arsta) {
+-		ath12k_warn(ab,
+-			    "not found link sta with bssid %pM for rssi chain\n",
+-			    arvif->bssid);
+-		return -EPROTO;
+-	}
++	if (!arsta)
++		return 0;
+ 
+ 	BUILD_BUG_ON(ARRAY_SIZE(arsta->chain_signal) >
+ 		     ARRAY_SIZE(stats_rssi->rssi_avg_beacon));
+@@ -8508,8 +8498,6 @@ static int ath12k_wmi_tlv_rssi_chain_par
+ 	for (j = 0; j < ARRAY_SIZE(arsta->chain_signal); j++)
+ 		arsta->chain_signal[j] = le32_to_cpu(stats_rssi->rssi_avg_beacon[j]);
+ 
+-	stats->stats_id = WMI_REQUEST_RSSI_PER_CHAIN_STAT;
+-
+ 	return 0;
+ }
+ 
