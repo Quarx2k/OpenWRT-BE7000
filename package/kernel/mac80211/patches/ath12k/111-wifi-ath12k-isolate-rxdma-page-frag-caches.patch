@@ -66,15 +66,16 @@ Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
  
 --- a/drivers/net/wireless/ath/ath12k/dp.c
 +++ b/drivers/net/wireless/ath/ath12k/dp.c
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,8 @@
   * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
   */
  
++#include <linux/bug.h>
 +#include <linux/page_frag_cache.h>
  #include "core.h"
  #include "dp_tx.h"
  #include "hif.h"
-@@ -1015,6 +1016,8 @@ static void ath12k_dp_cc_cleanup(struct
+@@ -1015,6 +1017,8 @@ static void ath12k_dp_cc_cleanup(struct
  
  	spin_unlock_bh(&dp->rx_desc_lock);
  
