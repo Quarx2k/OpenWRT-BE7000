@@ -28,6 +28,9 @@ fi
 if grep -q 'invalid pdev id %d in rssi chain parse' "$wifi/drivers/net/wireless/ath/ath12k/wmi.c"; then
   patch --batch -p1 -d "$wifi" <"$pkg/../../kernel/mac80211/patches/ath12k/112-wifi-ath12k-handle-all-vdev-chain-rssi-stats.patch"
 fi
+if grep -q 'ab->reg_freq_' "$wifi/drivers/net/wireless/ath/ath12k/reg.c"; then
+  patch --batch -p1 -d "$wifi" <"$pkg/../../kernel/mac80211/patches/ath12k/113-wifi-ath12k-keep-regulatory-frequency-ranges-per-pdev.patch"
+fi
 if ! grep -A3 'if (!irq_grp->napi_enabled)' "$wifi/drivers/net/wireless/ath/ath11k/ahb.c" | grep -q ath11k_ahb_ext_grp_enable; then
   patch --batch -p1 -d "$wifi" <"$pkg/../../kernel/mac80211/patches/ath11k/952-wifi-ath11k-make-external-IRQ-control-idempotent.patch"
 fi

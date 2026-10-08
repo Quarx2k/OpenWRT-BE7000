@@ -1,0 +1,194 @@
+From: Nikolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] wifi: ath12k: keep regulatory frequency ranges per pdev
+
+Regulatory events arrive for individual radios, but their frequency
+ranges are stored in ath12k_base. Building a domain for one radio can
+therefore overwrite the ranges used by another radio's update work.
+On split 5 GHz QCN9274 this can produce an inverted range, such as
+5715-5330 MHz, and prevent the upper-band radio from scanning.
+
+Store the ranges in ath12k_pdev and use the matching radio's limits
+when setting up channels and updating its advertised frequency range.
+This follows Baochen Qiang's analysis of the shared regulatory state.
+
+Link: https://lkml.iu.edu/2609.1/03870.html
+Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -854,11 +854,19 @@ struct mlo_timestamp {
+ 	u32 mlo_comp_timer;
+ };
+ 
++struct ath12k_reg_freq {
++	u32 start_freq;
++	u32 end_freq;
++};
++
+ struct ath12k_pdev {
+ 	struct ath12k *ar;
+ 	u32 pdev_id;
+ 	u32 hw_link_id;
+ 	struct ath12k_pdev_cap cap;
++	struct ath12k_reg_freq reg_freq_2ghz;
++	struct ath12k_reg_freq reg_freq_5ghz;
++	struct ath12k_reg_freq reg_freq_6ghz;
+ 	u8 mac_addr[ETH_ALEN];
+ 	struct mlo_timestamp timestamp;
+ };
+@@ -875,11 +883,6 @@ struct ath12k_board_data {
+ 	size_t len;
+ };
+ 
+-struct ath12k_reg_freq {
+-	u32 start_freq;
+-	u32 end_freq;
+-};
+-
+ struct ath12k_mlo_memory {
+ 	struct target_mem_chunk chunk[ATH12K_QMI_WLANFW_MAX_NUM_MEM_SEG_V01];
+ 	int mlo_mem_size;
+@@ -1152,9 +1155,6 @@ struct ath12k_base {
+ 	/* Denote whether MLO is possible within the device */
+ 	bool single_chip_mlo_support;
+ 
+-	struct ath12k_reg_freq reg_freq_2ghz;
+-	struct ath12k_reg_freq reg_freq_5ghz;
+-	struct ath12k_reg_freq reg_freq_6ghz;
+ 	const struct ath12k_mem_profile_based_param *profile_param;
+ 	enum ath12k_qmi_mem_mode target_mem_mode;
+ 
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -14240,9 +14240,9 @@ static int ath12k_mac_setup_channels_rat
+ 		}
+ 
+ 		freq_low = max(reg_cap->low_2ghz_chan,
+-			       ab->reg_freq_2ghz.start_freq);
++			       ar->pdev->reg_freq_2ghz.start_freq);
+ 		freq_high = min(reg_cap->high_2ghz_chan,
+-				ab->reg_freq_2ghz.end_freq);
++				ar->pdev->reg_freq_2ghz.end_freq);
+ 
+ 		ath12k_mac_update_ch_list(ar, band,
+ 					  reg_cap->low_2ghz_chan,
+@@ -14285,9 +14285,9 @@ static int ath12k_mac_setup_channels_rat
+ 			band->bitrates = ath12k_a_rates;
+ 
+ 			freq_low = max(reg_cap->low_5ghz_chan,
+-				       ab->reg_freq_6ghz.start_freq);
++				       ar->pdev->reg_freq_6ghz.start_freq);
+ 			freq_high = min(reg_cap->high_5ghz_chan,
+-					ab->reg_freq_6ghz.end_freq);
++					ar->pdev->reg_freq_6ghz.end_freq);
+ 
+ 			ath12k_mac_update_ch_list(ar, band,
+ 						  reg_cap->low_5ghz_chan,
+@@ -14342,9 +14342,9 @@ static int ath12k_mac_setup_channels_rat
+ 			}
+ 
+ 			freq_low = max(reg_cap->low_5ghz_chan,
+-				       ab->reg_freq_5ghz.start_freq);
++				       ar->pdev->reg_freq_5ghz.start_freq);
+ 			freq_high = min(reg_cap->high_5ghz_chan,
+-					ab->reg_freq_5ghz.end_freq);
++					ar->pdev->reg_freq_5ghz.end_freq);
+ 
+ 			ath12k_mac_update_ch_list(ar, band,
+ 						  reg_cap->low_5ghz_chan,
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -268,6 +268,7 @@ static void ath12k_copy_regd(struct ieee
+ 
+ int ath12k_regd_update(struct ath12k *ar, bool init)
+ {
++	struct ath12k_pdev *pdev = ar->pdev;
+ 	struct ath12k_wmi_hal_reg_capabilities_ext_arg *reg_cap;
+ 	u32 phy_id, freq_low, freq_high, supported_bands;
+ 	struct ath12k_hw *ah = ath12k_ar_to_ah(ar);
+@@ -304,8 +305,8 @@ int ath12k_regd_update(struct ath12k *ar
+ 			reg_cap = &ab->hal_reg_cap[phy_id];
+ 		}
+ 
+-		freq_low = max(reg_cap->low_2ghz_chan, ab->reg_freq_2ghz.start_freq);
+-		freq_high = min(reg_cap->high_2ghz_chan, ab->reg_freq_2ghz.end_freq);
++		freq_low = max(reg_cap->low_2ghz_chan, pdev->reg_freq_2ghz.start_freq);
++		freq_high = min(reg_cap->high_2ghz_chan, pdev->reg_freq_2ghz.end_freq);
+ 
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+@@ -317,16 +318,16 @@ int ath12k_regd_update(struct ath12k *ar
+ 			reg_cap = &ab->hal_reg_cap[phy_id];
+ 		}
+ 
+-		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_5ghz.start_freq);
+-		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_5ghz.end_freq);
++		freq_low = max(reg_cap->low_5ghz_chan, pdev->reg_freq_5ghz.start_freq);
++		freq_high = min(reg_cap->high_5ghz_chan, pdev->reg_freq_5ghz.end_freq);
+ 
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+ 
+ 	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP &&
+ 	    reg_cap->high_5ghz_chan >= ATH12K_MIN_6GHZ_FREQ) {
+-		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_6ghz.start_freq);
+-		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_6ghz.end_freq);
++		freq_low = max(reg_cap->low_5ghz_chan, pdev->reg_freq_6ghz.start_freq);
++		freq_high = min(reg_cap->high_5ghz_chan, pdev->reg_freq_6ghz.end_freq);
+ 
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+@@ -649,6 +650,7 @@ ath12k_reg_build_regd(struct ath12k_base
+ {
+ 	struct ieee80211_regdomain *new_regd = NULL;
+ 	struct ath12k_reg_rule *reg_rule, *reg_rule_6ghz;
++	struct ath12k_pdev *pdev = &ab->pdevs[reg_info->phy_id];
+ 	u32 flags, reg_6ghz_number, max_bw_6ghz;
+ 	u8 i = 0, j = 0, k = 0;
+ 	u8 num_rules;
+@@ -713,12 +715,12 @@ ath12k_reg_build_regd(struct ath12k_base
+ 
+ 	/* Reset start and end frequency for each band
+ 	 */
+-	ab->reg_freq_5ghz.start_freq = INT_MAX;
+-	ab->reg_freq_5ghz.end_freq = 0;
+-	ab->reg_freq_2ghz.start_freq = INT_MAX;
+-	ab->reg_freq_2ghz.end_freq = 0;
+-	ab->reg_freq_6ghz.start_freq = INT_MAX;
+-	ab->reg_freq_6ghz.end_freq = 0;
++	pdev->reg_freq_5ghz.start_freq = INT_MAX;
++	pdev->reg_freq_5ghz.end_freq = 0;
++	pdev->reg_freq_2ghz.start_freq = INT_MAX;
++	pdev->reg_freq_2ghz.end_freq = 0;
++	pdev->reg_freq_6ghz.start_freq = INT_MAX;
++	pdev->reg_freq_6ghz.end_freq = 0;
+ 
+ 	/* Update reg_rules[] below. Firmware is expected to
+ 	 * send these rules in order(2G rules first and then 5G)
+@@ -730,7 +732,7 @@ ath12k_reg_build_regd(struct ath12k_base
+ 			max_bw = min_t(u16, reg_rule->max_bw,
+ 				       reg_info->max_bw_2g);
+ 			flags = ath12k_get_bw_reg_flags(reg_info->max_bw_2g);
+-			ath12k_reg_update_freq_range(&ab->reg_freq_2ghz, reg_rule);
++			ath12k_reg_update_freq_range(&pdev->reg_freq_2ghz, reg_rule);
+ 		} else if (reg_info->num_5g_reg_rules &&
+ 			   (j < reg_info->num_5g_reg_rules)) {
+ 			reg_rule = reg_info->reg_rules_5g_ptr + j++;
+@@ -745,7 +747,7 @@ ath12k_reg_build_regd(struct ath12k_base
+ 			 */
+ 			flags = NL80211_RRF_AUTO_BW |
+ 				ath12k_get_bw_reg_flags(reg_info->max_bw_5g);
+-			ath12k_reg_update_freq_range(&ab->reg_freq_5ghz, reg_rule);
++			ath12k_reg_update_freq_range(&pdev->reg_freq_5ghz, reg_rule);
+ 		} else if (reg_info->is_ext_reg_event && reg_6ghz_number &&
+ 			   (k < reg_6ghz_number)) {
+ 			reg_rule = reg_rule_6ghz + k++;
+@@ -754,7 +756,7 @@ ath12k_reg_build_regd(struct ath12k_base
+ 				ath12k_get_bw_reg_flags(max_bw_6ghz);
+ 			if (reg_rule->psd_flag)
+ 				flags |= NL80211_RRF_PSD;
+-			ath12k_reg_update_freq_range(&ab->reg_freq_6ghz, reg_rule);
++			ath12k_reg_update_freq_range(&pdev->reg_freq_6ghz, reg_rule);
+ 		} else {
+ 			break;
+ 		}
