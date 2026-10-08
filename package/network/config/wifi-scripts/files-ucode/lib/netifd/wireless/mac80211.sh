@@ -106,7 +106,8 @@ function setup_phy(phy, config, data) {
 		system(`iw phy ${phy} set antenna ${config.txantenna} ${config.rxantenna} >/dev/null 2>&1`);
 	}
 	system(`iw phy ${phy} set distance ${config.distance} >/dev/null 2>&1`);
-	system(`iw phy ${phy} set txpower ${config.txpower}`);
+	if (!phy_suffix(config.radio, ':'))
+		system(`iw phy ${phy} set txpower ${config.txpower}`);
 
 	if (config.frag)
 		system(`iw phy ${phy} set frag ${config.frag}`);
@@ -314,6 +315,10 @@ function setup() {
 
 	if (length(supplicant_data) > 0)
 		supplicant.start(data);
+
+	if (data.phy_suffix)
+		for (let ifname in active_ifnames)
+			system(`iw dev ${ifname} set txpower ${config.txpower}`);
 
 	netifd.set_up();
 
