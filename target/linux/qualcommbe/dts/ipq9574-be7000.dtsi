@@ -66,7 +66,7 @@
 		tzapp@49b00000 { reg = <0 0x49b00000 0 0x600000>; no-map; };
 		/delete-node/ bootloader@4a000000;
 		bootloader@4a100000 { reg = <0 0x4a100000 0 0x400000>; no-map; };
-		q6_region: wcnss@4ab00000 { reg = <0 0x4ab00000 0 0x2b00000>; no-map; };
+		q6_region: wcss@4ab00000 { reg = <0 0x4ab00000 0 0x2b00000>; no-map; };
 		m3_dump: m3-dump@4d600000 { reg = <0 0x4d600000 0 0x100000>; no-map; };
 		q6_etr_region: q6-etr@4d700000 { reg = <0 0x4d700000 0 0x100000>; no-map; };
 		q6_caldb_region: q6-caldb@4d800000 { reg = <0 0x4d800000 0 0x500000>; no-map; };

@@ -30,7 +30,14 @@ curdir:=toolchain
 $(curdir)/builddirs := $(if $(CONFIG_GDB),gdb) $(if $(CONFIG_EXTERNAL_TOOLCHAIN),wrapper,kernel-headers binutils gcc/initial gcc/final $(LIBC) fortify-headers) $(if $(CONFIG_NASM),nasm) $(if $(CONFIG_USE_MOLD),mold)
 
 # builddir dependencies
+# GCC version string and buildbot rebuild check, computed on first use.
+toolchain_hash=$(eval toolchain_hash:=$(shell find toolchain -type f ! -path '*/.*' \
+	! -name '*.orig' ! -name '*.rej' ! -name '*~' -exec $(MKHASH) -n md5 {} + | \
+	LC_ALL=C sort | $(MKHASH) md5 | cut -c1-10))$(toolchain_hash)
+
 ifeq ($(CONFIG_EXTERNAL_TOOLCHAIN),)
+  $(curdir)/gcc/%: export TOOLCHAIN_HASH=$(toolchain_hash)
+
   ifdef CONFIG_USE_MUSL
     $(curdir)/gcc/initial/compile:=$(curdir)/binutils/compile
     $(curdir)/kernel-headers/compile:=$(curdir)/gcc/initial/compile
@@ -63,19 +70,15 @@ endif
 endif
 
 ifdef CONFIG_BUILDBOT
-ifneq ($(wildcard $(TOPDIR)/.git),)
   $(TOOLCHAIN_DIR)/stamp/.ver_check: $(TMP_DIR)/.build
-	revision="$$(cd "$(TOPDIR)" && git log --no-show-signature --format=%H -1 toolchain)"; \
-	[ -n "$$revision" ] || exit 1; \
-	[ "$$revision" = "$$(cat $@ 2>/dev/null)" ] || { \
+	echo $(toolchain_hash) > $(TMP_DIR)/.ver_check
+	cmp -s $(TMP_DIR)/.ver_check $@ || { \
 		rm -rf $(BUILD_DIR) $(STAGING_DIR) $(TOOLCHAIN_DIR) $(BUILD_DIR_TOOLCHAIN); \
 		mkdir -p $(TOOLCHAIN_DIR)/stamp; \
-		printf '%s\n' "$$revision" > $@; \
-	}; \
-	touch $@
+		mv $(TMP_DIR)/.ver_check $@; \
+	}
 
 $(TOOLCHAIN_DIR)/info.mk $(STAGING_DIR)/.prepared: $(TOOLCHAIN_DIR)/stamp/.ver_check
-endif
 endif
 
 # prerequisites for the individual targets
@@ -91,3 +94,4 @@ $(curdir)/install: $(curdir)/compile
 $(eval $(call stampfile,$(curdir),toolchain,compile,$(TOOLCHAIN_DIR)/stamp/.gcc_final_installed,,$(TOOLCHAIN_DIR)))
 $(eval $(call stampfile,$(curdir),toolchain,check,$(TMP_DIR)/.build))
 $(eval $(call subdir,$(curdir)))
+

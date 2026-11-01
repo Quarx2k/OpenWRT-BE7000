@@ -61,6 +61,9 @@ endef
 define Package/ath11k-firmware-ipq9574
 $(Package/ath11k-firmware-default)
   TITLE:=IPQ9574 ath11k firmware
+  URL:=https://github.com/quic/upstream-wifi-fw
+  LICENSE:=LicenseRef-QuIC
+  LICENSE_FILES:=../$(ATH11K_LEGACY_FW_SUBDIR)/ath11k-firmware/LICENSE.md
 endef
 
 define Build/Clean
