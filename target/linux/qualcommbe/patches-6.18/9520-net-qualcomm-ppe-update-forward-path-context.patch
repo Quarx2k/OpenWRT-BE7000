@@ -1,0 +1,33 @@
+From: Nikolai Semendiaev <agent00791@gmail.com>
+Subject: [PATCH] net: qualcomm: ppe: pass a forward-path context
+
+Use the context-based dev_fill_forward_path() API for the PPPoE path walk.
+
+Signed-off-by: Nikolai Semendiaev <agent00791@gmail.com>
+---
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_offload.c
+@@ -475,12 +475,12 @@ static void ppe_ppp_snapshot(struct ppe_offload *o,
+ 			     struct ppe_pppoe_session *session)
+ {
+ 	struct net_device_path_stack stack;
++	struct net_device_path_ctx ctx = {};
+ 	struct net_device *dev, *ppp = NULL, *upper;
+ 	struct list_head *iter;
+ 	const struct net_device *lower;
+ 	struct in_device *in_dev;
+ 	struct in_ifaddr *ifa;
+-	u8 daddr[ETH_ALEN] = {};
+ 	int port;
+ 
+ 	memset(session, 0, sizeof(*session));
+@@ -493,7 +493,8 @@ static void ppe_ppp_snapshot(struct ppe_offload *o,
+ 			goto out;
+ 		ppp = dev;
+ 	}
+-	if (!ppp || dev_fill_forward_path(ppp, daddr, &stack) ||
++	ctx.dev = ppp;
++	if (!ppp || dev_fill_forward_path(&ctx, &stack) ||
+ 	    stack.num_paths != 2 || stack.path[0].type != DEV_PATH_PPPOE ||
+ 	    stack.path[1].type != DEV_PATH_ETHERNET ||
+ 	    !stack.path[0].encap.id ||
