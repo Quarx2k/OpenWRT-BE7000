@@ -7,9 +7,9 @@ selection. BE7000 selects board 0x1008 for its split-PHY configuration.
 Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
 --- a/drivers/net/wireless/ath/ath12k/mhi.c
 +++ b/drivers/net/wireless/ath/ath12k/mhi.c
-@@ -7,6 +7,7 @@
- #include <linux/msi.h>
+@@ -8,6 +8,7 @@
  #include <linux/pci.h>
+ #include <linux/property.h>
  #include <linux/firmware.h>
 +#include <linux/of.h>
  
@@ -24,7 +24,7 @@ Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
  	int ret;
  	bool dualmac = false;
  
-@@ -204,19 +205,23 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
+@@ -205,22 +206,26 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
  	mhi_ctrl->reg_len = ab->mem_len;
  	mhi_ctrl->rddm_size = ab->hw_params->rddm_size;
  
@@ -40,16 +40,22 @@ Signed-off-by: Nickolai Semendiaev <agent00791@gmail.com>
 +	}
  
 -		if (!board_id || (board_id == OTP_INVALID_BOARD_ID)) {
+-			dualmac = ab->hw_rev == ATH12K_HW_QCN9274_HW20 &&
+-				  device_property_read_bool(ab->dev, "qcom,split-phy");
 -			ath12k_dbg(ab, ATH12K_DBG_BOOT,
--				   "failed to read board id\n");
+-				   "invalid OTP, selecting %s-mac\n",
+-				   dualmac ? "dual" : "single");
 -		} else if (board_id & OTP_VALID_DUALMAC_BOARD_ID_MASK) {
 -			dualmac = true;
 -			ath12k_dbg(ab, ATH12K_DBG_BOOT,
 -				   "dualmac fw selected for board id: %x\n", board_id);
 -		}
 +	if (!board_id || (board_id == OTP_INVALID_BOARD_ID)) {
++		dualmac = ab->hw_rev == ATH12K_HW_QCN9274_HW20 &&
++			  device_property_read_bool(ab->dev, "qcom,split-phy");
 +		ath12k_dbg(ab, ATH12K_DBG_BOOT,
-+			   "failed to read board id\n");
++			   "invalid OTP, selecting %s-mac\n",
++			   dualmac ? "dual" : "single");
 +	} else if (board_id & OTP_VALID_DUALMAC_BOARD_ID_MASK) {
 +		dualmac = true;
 +		ath12k_dbg(ab, ATH12K_DBG_BOOT,
