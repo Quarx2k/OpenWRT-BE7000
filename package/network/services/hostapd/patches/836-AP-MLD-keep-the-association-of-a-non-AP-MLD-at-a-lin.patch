@@ -40,7 +40,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
 ---
 --- a/src/ap/hostapd.c
 +++ b/src/ap/hostapd.c
-@@ -866,8 +866,70 @@ void hostapd_link_remove_tx_status(struc
+@@ -854,8 +854,70 @@ void hostapd_link_remove_tx_status(struc
  }
  
  
@@ -113,7 +113,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
  static void hostapd_link_remove_notify_stas(struct hostapd_data *hapd)
  {
  	struct hostapd_data *tx_hapd;
-@@ -927,6 +989,7 @@ static void hostapd_link_remove_expire_s
+@@ -915,6 +977,7 @@ static void hostapd_link_remove_expire_s
  	unsigned int wait_us;
  
  	hostapd_free_link_stas(hapd);
@@ -220,7 +220,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
  		/* Free as a link STA */
 --- a/src/ap/wpa_auth.c
 +++ b/src/ap/wpa_auth.c
-@@ -8228,6 +8228,11 @@ void wpa_reset_assoc_sm_info(struct wpa_
+@@ -8229,6 +8229,11 @@ void wpa_reset_assoc_sm_info(struct wpa_
  			     u8 mld_assoc_link_id)
  {
  #ifdef CONFIG_IEEE80211BE
